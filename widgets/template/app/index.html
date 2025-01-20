@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html ng-app="phonecatApp">
+<head>
+    <meta charset="UTF-8">
+    <title>Phone Catalog App</title>
+    <link rel="stylesheet" href="./style-config/style.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/angularjs/1.8.2/angular.min.js"></script>
+    <script src="client.js"></script>
+</head>
+<body ng-controller="PhoneListController">
+    <div class="container">
+        <h1>Phone Catalog</h1>
+        <ul class="phone-list">
+            <li ng-repeat="phone in phones">
+                <span class="phone-name">{{phone.name}}</span>
+                <p class="phone-snippet">{{phone.snippet}}</p>
+            </li>
+        </ul>
+    </div>
+</body>
+</html> 
