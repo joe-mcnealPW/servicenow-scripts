@@ -1,132 +1,120 @@
-/**
- * Check user criteria for a single record
- * @param {string} tableName - Name of the table containing the record
- * @param {string} recordSysId - Sys ID of the record to check
- * @param {string} [criteriaTable='kb_user_criteria'] - Optional: name of user criteria table
- * @returns {boolean} - Whether all required criteria are met
- */
-function checkUserCriteria(tableName, recordSysId, criteriaTable) {
-    if (!tableName || !recordSysId) {
-        return true;
-    }
-    
-    criteriaTable = criteriaTable || 'kb_user_criteria';
-    var currentUser = gs.getUser();
-    var meetsCriteria = false;
-    
-    var userCriteriaGR = new GlideRecord(criteriaTable);
-    userCriteriaGR.query();
-    
-    while (userCriteriaGR.next()) {
-        var matches = [];
-        var criteriaSysId = userCriteriaGR.getUniqueValue();
-        
-        // Check association
-        var assocGR = new GlideRecord(tableName + '_user_criteria');
-        assocGR.addQuery(tableName, recordSysId);
-        assocGR.addQuery('user_criteria', criteriaSysId);
-        assocGR.query();
-        
-        if (!assocGR.hasNext()) {
-            continue;
-        }
-        
-        // Check advanced script
-        if (userCriteriaGR.advanced_script) {
-            try {
-                var evaluator = new GlideScopedEvaluator();
-                var result = evaluator.evaluateScript(userCriteriaGR, 'advanced_script', {
-                    current: new GlideRecord(tableName).get(recordSysId)
-                });
-                if (result) {
-                    meetsCriteria = true;
-                    break;
-                }
-                continue;
-            } catch (e) {
-                gs.error('Error evaluating advanced script for user criteria: ' + e);
-                continue;
-            }
-        }
-        
-        // Criteria checks
-        var criteriaChecks = {
-            user: function() {
-                return userCriteriaGR.user && userCriteriaGR.user.toString() === currentUser.getID();
-            },
-            group: function() {
-                return userCriteriaGR.group && currentUser.isMemberOf(userCriteriaGR.group.toString());
-            },
-            role: function() {
-                return userCriteriaGR.role && currentUser.hasRole(userCriteriaGR.role.toString());
-            },
-            location: function() {
-                return userCriteriaGR.location && userCriteriaGR.location.toString() === currentUser.getLocation();
-            },
-            department: function() {
-                return userCriteriaGR.department && userCriteriaGR.department.toString() === currentUser.getDepartmentID();
-            },
-            company: function() {
-                return userCriteriaGR.company && userCriteriaGR.company.toString() === currentUser.getCompanyID();
-            }
-        };
-        
-        var specifiedCriteria = 0;
-        Object.keys(criteriaChecks).forEach(function(criteriaType) {
-            if (userCriteriaGR.getValue(criteriaType)) {
-                specifiedCriteria++;
-                if (criteriaChecks[criteriaType]()) {
-                    matches.push(true);
-                }
-            }
-        });
-        
-        if (userCriteriaGR.match_all) {
-            if (matches.length === specifiedCriteria) {
-                meetsCriteria = true;
-                break;
-            }
-        } else if (matches.length > 0) {
-            meetsCriteria = true;
-            break;
-        }
-    }
-    
-    return meetsCriteria;
-}
+var RecordCriteriaChecker = Class.create();
+RecordCriteriaChecker.prototype = {
+    initialize: function() {
+    },
 
-/**
- * Check user criteria for multiple records
- * @param {string} tableName - Name of the table containing the records
- * @param {array} recordSysIds - Array of sys_ids to check
- * @param {string} [criteriaTable='kb_user_criteria'] - Optional: name of user criteria table
- * @returns {array} - Array of objects containing sys_id and meetsCriteria status
- */
-function checkUserCriteriaMultiple(tableName, recordSysIds, criteriaTable) {
-    if (!tableName || !recordSysIds || !Array.isArray(recordSysIds)) {
-        return [];
-    }
-    
-    var results = [];
-    
-    recordSysIds.forEach(function(sysId) {
-        results.push({
-            sys_id: sysId,
-            meetsCriteria: checkUserCriteria(tableName, sysId, criteriaTable)
+    /**
+     * Get all user criteria sys_ids associated with multiple records
+     * @param {Array} recordSysIds - Array of record system IDs to check
+     * @param {string} mtomTable - Name of the many-to-many table
+     * @param {string} recordField - Name of the field in mtom table that references the record
+     * @returns {Object} Map of record IDs to their associated criteria IDs
+     */
+    getRecordsCriteria: function(recordSysIds, mtomTable, recordField) {
+        var criteriaMappings = {};
+        
+        // Initialize empty criteria arrays for all records
+        recordSysIds.forEach(function(recordId) {
+            criteriaMappings[recordId] = [];
         });
-    });
-    
-    return results;
-}
+        
+        var grMtom = new GlideRecord(mtomTable);
+        grMtom.addQuery(recordField, 'IN', recordSysIds);
+        grMtom.query();
+        
+        while (grMtom.next()) {
+            var recordId = grMtom[recordField].toString();
+            var criteriaId = grMtom.user_criteria.toString();
+            
+            if (criteriaMappings[recordId]) {
+                criteriaMappings[recordId].push(criteriaId);
+            }
+        }
+        
+        return criteriaMappings;
+    },
+
+    /**
+     * Check access for multiple records and return array of accessible record IDs
+     * @param {Array} recordSysIds - Array of record system IDs to check
+     * @param {string} mtomTable - Name of the many-to-many table
+     * @param {string} recordField - Name of the field in mtom table that references the record
+     * @param {boolean} [detailed=false] - If true, returns detailed results instead of just accessible IDs
+     * @returns {Array|Object} Array of accessible record IDs or detailed results object
+     */
+    checkAccess: function(recordSysIds, mtomTable, recordField, detailed) {
+        if (!Array.isArray(recordSysIds) || recordSysIds.length === 0) {
+            gs.warn('RecordCriteriaChecker: Invalid or empty record IDs array provided');
+            return detailed ? { accessibleRecords: [], results: {} } : [];
+        }
+
+        var criteriaMappings = this.getRecordsCriteria(recordSysIds, mtomTable, recordField);
+        var accessibleRecords = [];
+        var detailedResults = {};
+        
+        // Process each record
+        recordSysIds.forEach(function(recordId) {
+            var criteriaIds = criteriaMappings[recordId];
+            var result = {
+                hasAccess: false,
+                criteriaCount: criteriaIds.length,
+                matchingCriteria: []
+            };
+            
+            // If no criteria found, record is accessible
+            if (criteriaIds.length === 0) {
+                result.hasAccess = true;
+                accessibleRecords.push(recordId);
+            } else {
+                // Check for matching criteria
+                try {
+                    result.matchingCriteria = sn_uc.UserCriteriaLoader.getMatchingCriteria(gs.getUserID(), criteriaIds);
+                    result.hasAccess = result.matchingCriteria.length > 0;
+                    
+                    if (result.hasAccess) {
+                        accessibleRecords.push(recordId);
+                    }
+                } catch (e) {
+                    gs.error('Error checking user criteria for record ' + recordId + ': ' + e);
+                    result.error = e.toString();
+                }
+            }
+            
+            detailedResults[recordId] = result;
+        });
+        
+        return detailed ? {
+            accessibleRecords: accessibleRecords,
+            results: detailedResults
+        } : accessibleRecords;
+    }
+};
 
 // Example usage:
-// Single record check
-var hasCriteria = checkUserCriteria('kb_knowledge', 'article_sys_id', 'kb_user_criteria');
-gs.info('Meets criteria: ' + hasCriteria);
+/*
+var criteriaChecker = new RecordCriteriaChecker();
 
-// Multiple records check
-var recordIds = ['sys_id1', 'sys_id2', 'sys_id3'];
-var results = checkUserCriteriaMultiple('kb_knowledge', recordIds, 'kb_user_criteria');
-results.forEach(function(result) {
-    gs.info('Record ' + result.sys_id + ' meets criteria: ' + result.meetsCriteria);
-});
+// Check access for multiple knowledge base articles
+var recordIds = [
+    'kb_article_1_sys_id',
+    'kb_article_2_sys_id',
+    'kb_article_3_sys_id'
+];
+
+// Simple usage - just get accessible record IDs
+var accessibleIds = criteriaChecker.checkAccess(
+    recordIds,
+    'kb_knowledge_user_criteria_mtom',
+    'kb_knowledge'
+);
+gs.info('Accessible records: ' + JSON.stringify(accessibleIds));
+
+// Detailed usage - get full results
+var detailedResults = criteriaChecker.checkAccess(
+    recordIds,
+    'kb_knowledge_user_criteria_mtom',
+    'kb_knowledge',
+    true
+);
+gs.info('Detailed results: ' + JSON.stringify(detailedResults));
+*/
