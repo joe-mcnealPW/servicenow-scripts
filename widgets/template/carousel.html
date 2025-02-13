@@ -308,7 +308,39 @@ const ArticleCarousel: React.FC = () => {
 
 
 
-
+<div class="widget-container">
+      <div class="carousel">
+        <div ng-repeat="article in ctrl.articles" ng-class="{'card': true, 'active': $index === ctrl.activeIndex}">
+          <img ng-src="{{article.image || '/placeholder.svg'}}" alt="Article {{$index + 1}}">
+          <div class="content">
+            <div class="date">{{article.date}}</div>
+            <h3>{{article.title}}</h3>
+            <p>{{article.description}}</p>
+          </div>
+        </div>
+      </div>
+      <div class="navigation">
+        <div class="progress-container">
+          <div class="progress-bar">
+            <div class="progress-indicator" ng-style="ctrl.calculateProgressStyles()"></div>
+          </div>
+          <button ng-click="ctrl.togglePlayPause()" class="pause-button">
+            <i ng-class="{'fa fa-pause': ctrl.isPlaying, 'fa fa-play': !ctrl.isPlaying}"></i>
+          </button>
+        </div>
+        <div class="nav-bubbles">
+          <span ng-repeat="article in ctrl.articles" 
+                ng-class="{'bubble': true, 'active': $index === ctrl.activeIndex}"
+                ng-click="ctrl.setActiveIndex($index)"></span>
+        </div>
+      </div>
+      <div class="view-all-container">
+        <a href="#" class="view-all">
+          View All DLA Today News
+          <i class="fa fa-external-link"></i>
+        </a>
+      </div>
+    </div>
 
 
 
