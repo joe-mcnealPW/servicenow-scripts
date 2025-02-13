@@ -1,0 +1,309 @@
+"use client"
+
+import type React from "react"
+import { useState, useEffect } from "react"
+import { ExternalLink, Pause, Play } from "lucide-react"
+
+const articles = [
+  {
+    title:
+      "0. It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout.",
+    description:
+      "It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout",
+    image: "/placeholder.svg?height=300&width=400",
+    date: "January 23, 2025",
+  },
+  {
+    title:
+      "1. It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout.",
+    description:
+      "It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout",
+    image: "/placeholder.svg?height=300&width=400",
+    date: "January 24, 2025",
+  },
+  {
+    title:
+      "2. It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout.",
+    description:
+      "It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout",
+    image: "/placeholder.svg?height=300&width=400",
+    date: "January 25, 2025",
+  },
+  {
+    title:
+      "3. It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout.",
+    description:
+      "It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout",
+    image: "/placeholder.svg?height=300&width=400",
+    date: "January 26, 2025",
+  },
+  {
+    title:
+      "4. It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout.",
+    description:
+      "It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout",
+    image: "/placeholder.svg?height=300&width=400",
+    date: "January 27, 2025",
+  },
+]
+
+const ArticleCarousel: React.FC = () => {
+  const [activeIndex, setActiveIndex] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(true)
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout
+    if (isPlaying) {
+      timer = setInterval(() => {
+        setActiveIndex((prevIndex) => (prevIndex + 1) % articles.length)
+      }, 5000)
+    }
+    return () => clearInterval(timer)
+  }, [isPlaying])
+
+  const togglePlayPause = () => {
+    setIsPlaying(!isPlaying)
+  }
+
+  return (
+      <div className="widget-container">
+        <div className="carousel">
+          {articles.map((article, index) => (
+            <div key={index} className={`card ${index === activeIndex ? "active" : ""}`}>
+              <img src={article.image || "/placeholder.svg"} alt={`Article ${index + 1}`} />
+              <div className="content">
+                <div className="date">{article.date}</div>
+                <h3>{article.title}</h3>
+                <p>{article.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="navigation">
+          <div className="progress-container">
+            <div className="progress-bar">
+            <div className="progress-indicator-container">
+              <div 
+                className="progress-indicator"
+                style={{
+                  width: `${100 / articles.length}%`,
+                  left: `${(activeIndex * 100) / articles.length}%`,
+                }}
+              ></div>
+              </div>
+            </div>
+            <button onClick={togglePlayPause} className="pause-button">
+              {isPlaying ? <Pause size={16} /> : <Play size={16} />}
+            </button>
+          </div>
+          <div className="nav-bubbles">
+            {articles.map((_, index) => (
+              <span
+                key={index}
+                className={`bubble ${index === activeIndex ? "active" : ""}`}
+                onClick={() => setActiveIndex(index)}
+              ></span>
+            ))}
+          </div>
+        </div>
+        <div className="view-all-container">
+          <a href="#" className="view-all">
+            View All DLA Today News
+            <ExternalLink className="external-icon" />
+          </a>
+        </div>
+      <style jsx>{`
+      .outer-container {
+        
+      }
+
+      .widget-container {
+        background-color: white;
+        overflow: hidden;
+        display: flex;
+        padding: 24px;
+        background-color: white;
+        border-radius: 12px;
+        width: 482px;
+        height: 761px;
+        flex-direction: column;
+      }
+
+      .carousel {
+        position: relative;
+        background-color: #f8f8f8;
+        border-radius: 8px;
+        overflow: hidden;
+        flex-grow: 1;
+      }
+
+      .card {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        transition: opacity 0.5s ease-in-out;
+        pointer-events: none;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .card.active {
+        opacity: 1;
+        position: relative;
+        pointer-events: auto;
+      }
+
+      .card img {
+        width: 100%;
+        height: 300px;
+        object-fit: cover;
+      }
+
+      .content {
+        padding: 24px 30px;
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      .date {
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 8px;
+      }
+
+      .card h3 {
+        margin: 0 0 8px;
+        font-size: 24px;
+        line-height: 1.2;
+        color: #333;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+      }
+ 
+      .card p {
+        margin: 0;
+        font-size: 16px;
+        line-height: 1.5;
+        color: #666;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+      }
+
+      .navigation {
+        padding: 24px 30px 20px;
+      }
+
+      .progress-container {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .progress-bar {
+        flex-grow: 1;
+        height: 18px;
+        background-color: white;
+        border-radius: 15px;
+        position: relative;
+        overflow: hidden;
+        border: 2px solid #0066cc;
+        padding: 0 3px;
+      }
+
+      .progress-indicator-container {
+        padding-left: 2px;
+      }
+
+      .progress-indicator {
+        position: absolute;
+        height: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        background-color: #0066cc;
+        border-radius: 15px;
+        transition: left 0.3s ease-in-out;
+      }
+
+      .pause-button {
+        background: none;
+        border: none;
+        padding: 4px;
+        cursor: pointer;
+        color: #666;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .pause-button:hover {
+        color: #0066cc;
+      }
+
+      .nav-bubbles {
+        display: flex;
+        justify-content: center;
+        gap: 8px;
+      }
+
+      .bubble {
+        width: 10px;
+        height: 10px;
+        background-color: #ccc;
+        border-radius: 50%;
+        cursor: pointer;
+        transition: background-color 0.3s ease;
+      }
+
+      .bubble.active {
+        background-color: #0066cc;
+      }
+
+      .view-all-container {
+        padding: 20px 30px;
+      }
+
+      .view-all {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-decoration: none;
+        color: #0066cc;
+        font-size: 16px;
+      }
+
+      .external-icon {
+        width: 16px;
+        height: 16px;
+      }
+
+      @media (max-width: 500px) {
+        .outer-container {
+          padding: 16px;
+          width: 100%;
+          height: auto;
+          min-height: 761px;
+        }
+        
+        .widget-container {
+          max-width: 100%;
+        }
+      }
+    `}</style>
+    </div>
+  )
+}
+
+
