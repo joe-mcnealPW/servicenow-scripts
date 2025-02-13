@@ -307,3 +307,90 @@ const ArticleCarousel: React.FC = () => {
 }
 
 
+
+
+
+
+
+
+
+
+
+
+                (function() {
+  var serverOptions = input.options ? input.options : (input.parameters ? input.parameters : {});
+  var widgetId = $scope.widget.id;
+
+  var articleCarouselWidget = {
+    template: '<div ng-include="getTemplateUrl()"></div>',
+    controller: function($scope, $interval) {
+      var c = this;
+      c.articles = [
+        {
+          title: "0. It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout.",
+          description: "It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout It is a long established fact that a reader will be distracted by the readable content of a page when looking at its layout",
+          image: "/placeholder.svg?height=300&width=400",
+          date: "January 23, 2025"
+        },
+        // ... Add the rest of the articles here
+      ];
+
+      c.activeIndex = 0;
+      c.isPlaying = true;
+
+      var timer;
+
+      function startTimer() {
+        timer = $interval(function() {
+          c.activeIndex = (c.activeIndex + 1) % c.articles.length;
+        }, 5000);
+      }
+
+      function stopTimer() {
+        if (timer) {
+          $interval.cancel(timer);
+        }
+      }
+
+      c.togglePlayPause = function() {
+        c.isPlaying = !c.isPlaying;
+        if (c.isPlaying) {
+          startTimer();
+        } else {
+          stopTimer();
+        }
+      };
+
+      c.setActiveIndex = function(index) {
+        c.activeIndex = index;
+      };
+
+      c.calculateProgressStyles = function() {
+        var width = (100 / c.articles.length) + '%';
+        var maxLeftPosition = 100 - (100 / c.articles.length);
+        var leftPosition = Math.min((c.activeIndex * 100) / c.articles.length, maxLeftPosition);
+        var left = leftPosition + '%';
+
+        return {
+          width: 'calc(' + width + ' - 4px)',
+          left: 'calc(' + left + ' + 2px)'
+        };
+      };
+
+      startTimer();
+
+      $scope.$on('$destroy', function() {
+        stopTimer();
+      });
+    },
+    controllerAs: 'ctrl'
+  };
+
+  $scope.getTemplateUrl = function() {
+    return 'article-carousel-template.html';
+  };
+
+  $scope.c = articleCarouselWidget.controller($scope, $interval);
+})();
+
+
