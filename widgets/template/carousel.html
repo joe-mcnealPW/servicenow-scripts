@@ -384,6 +384,23 @@ const ArticleCarousel: React.FC = () => {
         }
       }
 
+
+                  c.setNewActiveIndex = (newIndex) => {
+    if (c.isAnimating || newIndex === c.activeIndex) return
+    c.isAnimating = true
+    c.direction = newIndex > c.activeIndex ? 1 : -1
+    c.activeIndex = newIndex
+    if (serverScope && serverScope.$applyAsync) {
+      serverScope.$applyAsync()
+    }
+    setTimeout(() => {
+      c.isAnimating = false
+      if (serverScope && serverScope.$applyAsync) {
+        serverScope.$applyAsync()
+      }
+    }, 500)
+  }
+
                 c.getCardStyle = (index) => {
     if (index === c.activeIndex) {
       return { transform: "translateX(0)", zIndex: 2, opacity: 1 }
