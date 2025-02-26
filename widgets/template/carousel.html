@@ -384,6 +384,18 @@ const ArticleCarousel: React.FC = () => {
         }
       }
 
+                c.getCardStyle = (index) => {
+    if (index === c.activeIndex) {
+      return { transform: "translateX(0)", zIndex: 2, opacity: 1 }
+    } else if (c.direction > 0 && index === (c.activeIndex - 1 + c.articles.length) % c.articles.length) {
+      return { transform: "translateX(-100%)", zIndex: 1, opacity: c.isAnimating ? 1 : 0 }
+    } else if (c.direction < 0 && index === (c.activeIndex + 1) % c.articles.length) {
+      return { transform: "translateX(100%)", zIndex: 1, opacity: c.isAnimating ? 1 : 0 }
+    } else {
+      return { transform: "translateX(100%)", zIndex: 0, opacity: 0 }
+    }
+  }
+
       c.togglePlayPause = function() {
         c.isPlaying = !c.isPlaying;
         if (c.isPlaying) {
