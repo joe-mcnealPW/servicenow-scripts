@@ -76,6 +76,58 @@
 
 
 
+(function() {
+    /* Simplified server-side function for URL manipulation */
+    
+    /**
+     * Updates a URL by:
+     * 1. Replacing the path segment between the last / and ?
+     * 2. Making the id parameter value match the page_id parameter value
+     * 
+     * @param {string} url - The original URL
+     * @param {string} newPortalPath - The new path segment to use
+     * @return {string} - The modified URL
+     */
+    function updateUrlWithPortalAndId(url, newPortalPath) {
+        // Step 1: Replace the path segment between the last / and the question mark
+        var modifiedUrl = url.replace(/\/([^\/\?]+)(\?)/, '/' + newPortalPath + '$2');
+        
+        // Step 2: Extract page_id value using regex
+        var pageIdMatch = modifiedUrl.match(/[?&]page_id=([^&]*)/);
+        
+        if (pageIdMatch && pageIdMatch[1]) {
+            var pageIdValue = pageIdMatch[1];
+            
+            // Check if id parameter exists and update it
+            if (modifiedUrl.match(/[?&]id=[^&]*/)) {
+                // Replace existing id parameter
+                modifiedUrl = modifiedUrl.replace(/([?&])id=[^&]*/, '$1id=' + pageIdValue);
+            } else {
+                // Add id parameter if it doesn't exist
+                modifiedUrl += (modifiedUrl.includes('?') ? '&' : '?') + 'id=' + pageIdValue;
+            }
+        }
+        
+        return modifiedUrl;
+    }
+    
+    // Example usage
+    var originalUrl = "https://test.com/preview_page?page_id=test_page_1&id=test_page_2";
+    var newPortalPath = "new_portal";
+    var modifiedUrl = updateUrlWithPortalAndId(originalUrl, newPortalPath);
+    
+    // Log for debugging
+    gs.info('Original URL: ' + originalUrl);
+    gs.info('Modified URL: ' + modifiedUrl);
+    
+    // Make available to your widget data
+    data.originalUrl = originalUrl;
+    data.modifiedUrl = modifiedUrl;
+})();
+
+
+
+
 
 
 
