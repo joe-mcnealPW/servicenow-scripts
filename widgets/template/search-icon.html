@@ -73,3 +73,104 @@
     </div>
 </body>
 </html>
+
+
+
+
+
+
+
+(function() {
+    /* Server-side function for URL manipulation */
+    
+    /**
+     * Updates a URL by:
+     * 1. Replacing the path segment between the last / and ?
+     * 2. Making the id parameter value match the page_id parameter value
+     * 
+     * @param {string} url - The original URL
+     * @param {string} newPortalPath - The new path segment to use
+     * @return {string} - The modified URL
+     */
+    function updateUrlWithPortalAndId(url, newPortalPath) {
+        var modifiedUrl = url;
+        
+        // Step 1: Replace the path segment between the last / and ?
+        var questionMarkIndex = modifiedUrl.indexOf('?');
+        if (questionMarkIndex !== -1) {
+            // Find the last slash before the question mark
+            var lastSlashIndex = modifiedUrl.lastIndexOf('/', questionMarkIndex);
+            
+            if (lastSlashIndex !== -1) {
+                // Replace the segment between the slash and question mark
+                var beforePath = modifiedUrl.substring(0, lastSlashIndex + 1);
+                var afterPath = modifiedUrl.substring(questionMarkIndex);
+                modifiedUrl = beforePath + newPortalPath + afterPath;
+            }
+        }
+        
+        // Step 2: Update the id parameter to match page_id
+        // Extract the page_id value
+        var pageIdValue = "";
+        var pageIdStart = modifiedUrl.indexOf('page_id=');
+        
+        if (pageIdStart !== -1) {
+            // Move past "page_id=" text
+            pageIdStart += 8; // "page_id=".length
+            
+            // Find the end of the page_id value (& or end of string)
+            var pageIdEnd = modifiedUrl.indexOf('&', pageIdStart);
+            if (pageIdEnd === -1) {
+                // If there's no & after page_id, take the rest of the string
+                pageIdValue = modifiedUrl.substring(pageIdStart);
+            } else {
+                // Extract value between page_id= and the next &
+                pageIdValue = modifiedUrl.substring(pageIdStart, pageIdEnd);
+            }
+            
+            // Check if id parameter exists
+            var idStart = modifiedUrl.indexOf('id=');
+            if (idStart !== -1) {
+                // Find the end of the id value
+                var idEnd = modifiedUrl.indexOf('&', idStart);
+                if (idEnd === -1) {
+                    // id is the last parameter
+                    var preId = modifiedUrl.substring(0, idStart);
+                    modifiedUrl = preId + 'id=' + pageIdValue;
+                } else {
+                    // id is followed by other parameters
+                    var preId = modifiedUrl.substring(0, idStart);
+                    var postId = modifiedUrl.substring(idEnd);
+                    modifiedUrl = preId + 'id=' + pageIdValue + postId;
+                }
+            } else {
+                // Add id parameter if it doesn't exist
+                if (modifiedUrl.indexOf('?') !== -1) {
+                    // URL already has parameters, add with &
+                    modifiedUrl = modifiedUrl + '&id=' + pageIdValue;
+                } else {
+                    // URL has no parameters yet, add with ?
+                    modifiedUrl = modifiedUrl + '?id=' + pageIdValue;
+                }
+            }
+        }
+        
+        return modifiedUrl;
+    }
+    
+    // Example usage
+    var originalUrl = "https://test.com/preview_page?page_id=test_page_1&id=test_page_2";
+    var newPortalPath = "new_portal";
+    var modifiedUrl = updateUrlWithPortalAndId(originalUrl, newPortalPath);
+    
+    // Log for debugging
+    gs.info('Original URL: ' + originalUrl);
+    gs.info('Modified URL: ' + modifiedUrl);
+    
+    // Make available to your widget data
+    data.originalUrl = originalUrl;
+    data.modifiedUrl = modifiedUrl;
+    
+    // You could also expose the function itself if needed
+    data.updateUrlFunction = updateUrlWithPortalAndId;
+})();
