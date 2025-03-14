@@ -5,11 +5,11 @@ for (var i in pageIds) {
     gs.print("Querying page: " + pageIds[i]);
     
     var page = new GlideRecord('sp_page');
-    page.addQuery('sys_id', pageIds[i]);
+    page.addQuery('id', pageIds[i]);
     page.query();
     
     if (page.next()) {
-        var page_id = page.getValue('sys_id');
+        var page_id = page.getValue('id');
         var page_title = page.getValue('title');
         
         // get containers
