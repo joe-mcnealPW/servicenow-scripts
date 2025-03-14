@@ -111,9 +111,13 @@ gs.print(csvOutput);
 var fileName = "widget_page_mapping_" + new GlideDateTime().getDisplayValue() + ".csv";
 var email = "recipient@example.com"; // Replace with actual email
 
+// Scheduled job that initiates the script
+var scheduledJob = new GlideRecord('sysauto_script');
+scheduledJob.get(gs.getScriptID());
+
 // Create an attachment record
 var attachment = new GlideSysAttachment();
-var attachmentId = attachment.write('sys_script', gs.getProperty('instance_name') + '_' + fileName, 'text/csv', csvOutput);
+var attachmentId = attachment.write(scheduledJob, gs.getProperty('instance_name') + '_' + fileName, 'text/csv', csvOutput);
 
 // Send email with the attachment
 if (attachmentId) {
