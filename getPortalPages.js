@@ -10,11 +10,12 @@ for (var i in pageIds) {
     
     if (page.next()) {
         var page_id = page.getValue('id');
+        var page_sys_id = page.getValue('sys_id');
         var page_title = page.getValue('title');
         
         // get containers
         var containers = new GlideRecord('sp_container');
-        containers.addQuery('sp_page', page_id);
+        containers.addQuery('sp_page', page_sys_id);
         containers.query();
         
         while (containers.next()) {
