@@ -47,7 +47,7 @@ for (var i in pageIds) {
                     
                     while (instances.next()) {
                         gs.print("Querying instances for page: " + pageIds[i]);
-                        var widget_id = instances.getValue('sys_widget');
+                        var widget_id = instances.getValue('sp_widget');
                         
                         // get widget
                         var widget = new GlideRecord('sp_widget');
