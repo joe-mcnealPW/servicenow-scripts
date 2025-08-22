@@ -71,3 +71,17 @@ span.ng-scope:has(> div[widget="widget"]) {
 
 
 
+.content-column span > div[ng-if]:not([ng-if="true"]) {
+  display: none; /* Hides the div when ng-if is false */
+}
+.content-column span > div[ng-if]:not([ng-if="true"]) {
+  display: none; /* Redundant but ensures the div is hidden */
+}
+.content-column span:empty,
+.content-column span > div:empty {
+  display: none; /* Hides the span if its div is empty */
+}
+
+
+
+
