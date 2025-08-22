@@ -37,3 +37,28 @@ span.ng-scope > div[widget="widget"]:empty + *,
 span.ng-scope:not(:has(*:not(div[widget="widget"]:empty))) {
   display: none !important;
 }
+
+
+
+
+
+
+
+/* Hide the div when empty */
+span.ng-scope > div[widget="widget"]:empty {
+  display: none !important;
+}
+
+/* Hide the span when it only contains that div */
+span.ng-scope > div[widget="widget"]:only-child:empty {
+  display: none !important;
+}
+
+/* Target the parent span specifically */
+span.ng-scope:empty {
+  display: none !important;
+}
+
+
+
+
