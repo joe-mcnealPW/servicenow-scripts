@@ -61,4 +61,13 @@ span.ng-scope:empty {
 
 
 
+/* Test CSS - if :has() works, this should make the span background red */
+span.ng-scope:has(> div[widget="widget"]) {
+  background-color: red !important;
+  border: 2px solid blue !important;
+  padding: 5px !important;
+}
+
+
+
 
