@@ -28,3 +28,12 @@ span.ng-scope:has(div[widget="widget"]:empty:only-child) {
 span.ng-scope > div[widget="widget"]:empty:only-child {
   display: none;
 }
+
+
+
+/* Hide both the span and the div when the div is empty */
+span.ng-scope > div[widget="widget"]:empty,
+span.ng-scope > div[widget="widget"]:empty + *,
+span.ng-scope:not(:has(*:not(div[widget="widget"]:empty))) {
+  display: none !important;
+}
