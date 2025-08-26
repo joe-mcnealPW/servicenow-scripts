@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+  <header>
+    <style>
+  // Responsive table wrapper
+.table-responsive-wrapper {
+  overflow-x: auto;
+  position: relative;
+  
+  // Add shadow when scrolling horizontally
+  &.scrolled table {
+    th:first-child,
+    td:first-child {
+      box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+    }
+  }
+}
+
+// Table modifications
+table {
+  min-width: 800px; // Ensures horizontal scroll on small screens
+  
+  // Prevent text wrapping in all cells
+  th, td {
+    white-space: nowrap;
+  }
+  
+  // First column (Description) - sticky and fixed width
+  th:first-child,
+  td:first-child {
+    position: sticky;
+    left: 0;
+    width: 500px;
+    min-width: 500px;
+    max-width: 500px;
+    text-align: left;
+    background-color: inherit;
+    z-index: 2;
+    
+    // Text truncation for first column content
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  // Ensure header has higher z-index
+  th:first-child {
+    z-index: 3;
+  }
+  
+  // Center align all columns except first
+  th:not(:first-child),
+  td:not(:first-child) {
+    text-align: center;
+  }
+  
+  // Add right borders to columns (except last)
+  th:not(:last-child),
+  td:not(:last-child) {
+    border-right: 1px solid #e0e0e0;
+  }
+  
+  // Alternating row colors
+  tbody tr {
+    &:nth-child(odd) {
+      background-color: white;
+    }
+    
+    &:nth-child(even) {
+      background-color: #f9f9f9;
+    }
+  }
+  
+  // Ensure sticky columns inherit row background
+  tbody tr:nth-child(odd) {
+    th:first-child,
+    td:first-child {
+      background-color: white;
+    }
+  }
+  
+  tbody tr:nth-child(even) {
+    th:first-child,
+    td:first-child {
+      background-color: #f9f9f9;
+    }
+  }
+  
+  // Header background for sticky column
+  thead th:first-child {
+    background-color: inherit; // Will use your existing thead background
+  }
+}
+</style>
+  </header>
+<body>
+
+  <div class="table-responsive-wrapper" id="tableWrapper">
+  <table ng-if="tab.details.rows && tab.details.rows.length > 0">
+    <!-- your existing table content -->
+  </table>
+</div>
+</body>
+
+
+</html>
