@@ -38,10 +38,12 @@ function getKnowledgeBaseCounts(kbSysIds) {
         if (grArticle.next()) {
             articleCount = parseInt(grArticle.getAggregate('COUNT'), 10) || 0;
         }
+         // Format the count with commas
+        var formattedCount = articleCount.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         
         result.push({
             title: kbTitle,
-            article_count: articleCount
+            article_count: formattedCount
         });
     }
     
