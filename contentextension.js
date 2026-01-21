@@ -1,120 +1,123 @@
 var cd_ContentDeliveryExtended = Class.create();
 cd_ContentDeliveryExtended.prototype = Object.extendsObject(cd_ContentDelivery, {
 
-// ------------------------------------------------------------------------
-// NEW METHOD: Retrieve single content item by sys_id
-// ------------------------------------------------------------------------
-getContentBySysId: function(sysId, includeRichText, isNews, visibilityRecord) {
-    if (!sysId) {
-        return null;
-    }
+    /**
+     * Retrieve a single content item by its sys_id
+     * 
+     * @param {string} sysId - The sys_id of the content record
+     * @param {boolean} [includeRichText=false] - Whether to parse and include rich text fields
+     * @param {boolean} [isNews=false] - Treat as news/article content
+     * @param {GlideRecord} [visibilityRecord] - Optional: pre-fetched sn_cd_content_visibility record
+     * @returns {Object|null} Content object or null if not found/invalid
+     */
+    getContentBySysId: function(sysId, includeRichText, isNews, visibilityRecord) {
+        if (!sysId) {
+            return null;
+        }
 
-    var cd_Utils = new sn_cd.cd_Utils();
-    var contentTable = isNews 
-        ? cd_CommonConstants.CONTENT_TABLE_NEWS 
-        : cd_CommonConstants.CONTENT_TABLE_PORTAL;
+        var cd_Utils = new sn_cd.cd_Utils();
+        var contentTable = isNews 
+            ? cd_CommonConstants.CONTENT_TABLE_NEWS 
+            : cd_CommonConstants.CONTENT_TABLE_PORTAL;
 
-    var grContent = new GlideRecord(contentTable);
-    if (!grContent.get(sysId)) {
-        return null;
-    }
+        var grContent = new GlideRecord(contentTable);
+        if (!grContent.get(sysId)) {
+            return null;
+        }
 
-    // Quick active check (you can remove or make optional)
-    if (grContent.getValue('active') !== '1') {
-        return null;
-    }
+        // Optional: skip inactive content (remove if you want to allow preview of drafts)
+        if (grContent.getValue('active') !== '1') {
+            return null;
+        }
 
-    var results = {
-        contentMap: {},
-        contentArray: []
-    };
+        var results = {
+            contentMap: {},
+            contentArray: []
+        };
 
-    var idx;
+        var idx;
 
-    if (isNews) {
-        idx = this.addNewsContentToResult(
-            grContent,
-            results,
-            sysId,
-            visibilityRecord,
-            true   // precomputedAccess – bypass audience check
-        );
-    } else {
-        idx = this._addContentToResult(
-            grContent,
-            results,
-            visibilityRecord
-        );
-    }
+        if (isNews) {
+            idx = this.addNewsContentToResult(
+                grContent,
+                results,
+                sysId,
+                visibilityRecord,
+                true   // precomputedAccess – skip audience check
+            );
+        } else {
+            idx = this._addContentToResult(
+                grContent,
+                results,
+                visibilityRecord
+            );
+        }
 
-    if (typeof idx === 'undefined' || idx < 0) {
-        return null;
-    }
+        if (typeof idx === 'undefined' || idx < 0) {
+            return null;
+        }
 
-    var contentObj = results.contentArray[idx];
+        var contentObj = results.contentArray[idx];
 
-    // Optionally hydrate rich text fields (expensive → opt-in)
-    if (includeRichText === true) {
-var richText = this.getRichTextForContent(grContent, 'rich_text');
-var richHtml  = this.getRichTextForContent(grContent, 'rich_content_html');
+        // ------------------------------------------------------------------------
+        // Rich text handling – extremely defensive to prevent Rhino toString crashes
+        // ------------------------------------------------------------------------
+        if (includeRichText === true) {
+            // rich_text
+            var rtRaw = this.getRichTextForContent(grContent, 'rich_text');
+            contentObj.rich_text = (typeof rtRaw === 'string') ? rtRaw : '';
 
-contentObj.rich_text = (typeof richText === 'string') ? richText : null;
-contentObj.rich_content_html = (typeof richHtml === 'string') ? richHtml : null;
+            // rich_content_html + lazy iframe fix
+            var rhRaw = this.getRichTextForContent(grContent, 'rich_content_html');
+            contentObj.rich_content_html = null;
 
-if (typeof contentObj.rich_content_html === 'string' && contentObj.rich_content_html) {
-    contentObj.rich_content_html = contentObj.rich_content_html.replace(/<iframe /g, '<iframe loading="lazy" ');
-}
+            if (typeof rhRaw === 'string' && rhRaw !== '') {
+                try {
+                    contentObj.rich_content_html = rhRaw.replace(/<iframe /gi, '<iframe loading="lazy" ');
+                } catch (e) {
+                    gs.error("Failed to process rich_content_html for content sys_id " + sysId + ": " + (e.message || e));
+                    contentObj.rich_content_html = rhRaw; // fallback to raw value
+                }
+            }
 
-// Bonus fields if useful – also defensive
-var headline = this.getRichTextForContent(grContent, 'headline');
-contentObj.headline_text = (typeof headline === 'string') ? headline : null;
+            // headline / heading / body – same defensive pattern
+            var headlineRaw = this.getRichTextForContent(grContent, 'headline');
+            contentObj.headline_text = (typeof headlineRaw === 'string') ? headlineRaw : '';
 
-var heading = this.getRichTextForContent(grContent, 'heading_text');
-contentObj.heading_text = (typeof heading === 'string') ? heading : null;
+            var headingRaw = this.getRichTextForContent(grContent, 'heading_text');
+            contentObj.heading_text = (typeof headingRaw === 'string') ? headingRaw : '';
 
-var body = this.getRichTextForContent(grContent, 'body_text');
-contentObj.body_text = (typeof body === 'string') ? body : null;
-}
-    // Helpful metadata
-    contentObj.sys_class_name = grContent.getValue('sys_class_name');
-    contentObj.content_type   = grContent.getValue('content_type');
-    contentObj.is_news        = !!isNews;
+            var bodyRaw = this.getRichTextForContent(grContent, 'body_text');
+            contentObj.body_text = (typeof bodyRaw === 'string') ? bodyRaw : '';
+        }
 
-    // Attach visibility/scheduling context if available
-    if (visibilityRecord && visibilityRecord.isValidRecord()) {
-        contentObj.schedule_order       = visibilityRecord.getValue('order');
-        contentObj.availability_start   = visibilityRecord.getValue('availability_start_date');
-        contentObj.availability_end     = visibilityRecord.getValue('availability_end_date');
-        contentObj.topic                = visibilityRecord.getValue('topic');
-        contentObj.sp_page              = visibilityRecord.getDisplayValue('sp_page');
-    }
+        // Add metadata that’s always safe
+        contentObj.sys_class_name = grContent.getValue('sys_class_name') || '';
+        contentObj.content_type   = grContent.getValue('content_type')   || '';
+        contentObj.is_news        = !!isNews;
 
-    return contentObj;
-},
+        // Visibility/scheduling context if provided
+        if (visibilityRecord && visibilityRecord.isValidRecord()) {
+            contentObj.schedule_order       = visibilityRecord.getValue('order') || '';
+            contentObj.availability_start   = visibilityRecord.getValue('availability_start_date') || '';
+            contentObj.availability_end     = visibilityRecord.getValue('availability_end_date')   || '';
+            contentObj.topic                = visibilityRecord.getValue('topic') || '';
+            contentObj.sp_page              = visibilityRecord.getDisplayValue('sp_page') || '';
+        }
 
-// ------------------------------------------------------------------------
-// Optional convenience wrappers
-// ------------------------------------------------------------------------
-getPortalContentBySysId: function(sysId, includeRichText) {
-    return this.getContentBySysId(sysId, includeRichText, false);
-},
+        return contentObj;
+    },
 
-getNewsContentBySysId: function(sysId, includeRichText) {
-    return this.getContentBySysId(sysId, includeRichText, true);
-},
+    // ------------------------------------------------------------------------
+    // Convenience wrappers
+    // ------------------------------------------------------------------------
+    getPortalContentBySysId: function(sysId, includeRichText) {
+        return this.getContentBySysId(sysId, includeRichText, false);
+    },
 
-// ------------------------------------------------------------------------
-// You can also override / enhance existing methods here if needed
-// Example:
-// ------------------------------------------------------------------------
-/*
-getContentForWidgetInstance: function(instanceId, topicId, sysId, params) {
-    // Custom logic before or after calling parent
-    var result = this.getSuper().getContentForWidgetInstance(instanceId, topicId, sysId, params);
-    // ... modify result ...
-    return result;
-},
-*/
+    getNewsContentBySysId: function(sysId, includeRichText) {
+        return this.getContentBySysId(sysId, includeRichText, true);
+    },
 
-type: 'cd_ContentDeliveryExtended'
+    type: 'cd_ContentDeliveryExtended'
 });
