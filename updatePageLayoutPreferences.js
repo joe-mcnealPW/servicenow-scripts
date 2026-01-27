@@ -1,37 +1,10 @@
-function insertWidget(widgetArray, newWidget, targetColumn, targetOrder) {
-  // First, increment the order of all widgets in the target column 
-  // that have an order >= targetOrder
-  widgetArray.forEach(widget => {
-    if (widget.sp_column === targetColumn && widget.order >= targetOrder) {
-      widget.order++;
-    }
-  });
-  
-  // Set the new widget's properties
-  newWidget.sp_column = targetColumn;
-  newWidget.order = targetOrder;
-  
-  // Add the new widget to the array
-  widgetArray.push(newWidget);
-  
-  // Optional: Sort the array by column and order for cleaner organization
-  widgetArray.sort((a, b) => {
-    if (a.sp_column !== b.sp_column) {
-      return a.sp_column - b.sp_column;
-    }
-    return a.order - b.order;
-  });
-  
-  return widgetArray;
-}
-
-// Example usage:
+// Configuration
 const column = 1;
 const order = 3;
 const newObject = {
   sys_id: "new_widget_sys_id",
   is_shown: true,
-  sp_column: null, // Will be set by the function
+  sp_column: column,
   description: "",
   is_collapsed: false,
   rules: {
@@ -43,8 +16,24 @@ const newObject = {
   },
   id: "my_new_widget",
   sp_widget: "My New Widget",
-  order: null // Will be set by the function
+  order: order
 };
 
-// Insert the widget
-insertWidget(yourWidgetArray, newObject, column, order);
+// Increment the order of all widgets in the target column 
+// that have an order >= target order
+widgetArray.forEach(widget => {
+  if (widget.sp_column === column && widget.order >= order) {
+    widget.order++;
+  }
+});
+
+// Add the new widget to the array
+widgetArray.push(newObject);
+
+// Sort the array by column and order
+widgetArray.sort((a, b) => {
+  if (a.sp_column !== b.sp_column) {
+    return a.sp_column - b.sp_column;
+  }
+  return a.order - b.order;
+});
