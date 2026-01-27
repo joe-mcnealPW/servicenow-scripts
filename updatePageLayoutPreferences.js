@@ -1,3 +1,7 @@
+/*
+This script programmatically adds a new widget to a ServiceNow user preference layout configuration (such as a homepage or dashboard). It queries the specified user preference record, parses the existing widget array from JSON, and inserts a new widget at a designated column and order position. The script automatically increments the order value of all existing widgets in the target column that appear at or after the insertion point, ensuring no widgets are overwritten or displaced. After insertion and reordering, the updated widget array is sorted by column and order, then saved back to the user preference record. This is useful for bulk widget deployment, automated dashboard configuration, or programmatic layout management without manual intervention.
+*/
+
 // Configuration
 const column = 1;
 const order = 3;
