@@ -21,15 +21,15 @@ searchFavorites: function() {
     });
     
     // Count specific types with null checks
-    c.kbcount = c.state.favorites.filter(fv => 
-        fv.type && fv.type.toLowerCase().includes('knowledge')
-    ).length;
+    c.kbcount = c.state.favorites.filter(function(fv) {
+        return fv.type && fv.type.toLowerCase().includes('knowledge');
+    }).length;
     
-    c.catalogCount = c.state.favorites.filter(fv => 
-        fv.type && fv.type.toLowerCase() === 'catalog-item'
-    ).length;
+    c.catalogCount = c.state.favorites.filter(function(fv) {
+        return fv.type && fv.type.toLowerCase() === 'catalog-item';
+    }).length;
     
-    c.appCount = c.state.favorites.filter(fv => 
-        fv.type && fv.type.toLowerCase() === 'application'
-    ).length;
+    c.appCount = c.state.favorites.filter(function(fv) {
+        return fv.type && fv.type.toLowerCase() === 'application';
+    }).length;
 },
