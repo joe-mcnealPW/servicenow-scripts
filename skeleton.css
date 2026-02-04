@@ -34,7 +34,7 @@
 
 /* Text Lines */
 .skeleton-text {
-    height: 12px;
+    height: 14px;
     width: 100%;
     margin-bottom: 8px;
 }
@@ -43,6 +43,12 @@
     height: 16px;
     width: 100%;
     margin-bottom: 10px;
+}
+
+.skeleton-text-md {
+    height: 12px;
+    width: 100%;
+    margin-bottom: 8px;
 }
 
 .skeleton-text-sm {
@@ -104,6 +110,13 @@
     flex-shrink: 0;
 }
 
+.skeleton-avatar-md {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
 .skeleton-avatar-lg {
     width: 64px;
     height: 64px;
@@ -131,6 +144,12 @@
     border-radius: 6px;
 }
 
+.skeleton-image-md {
+    width: 100%;
+    height: 160px;
+    border-radius: 6px;
+}
+
 .skeleton-image-lg {
     width: 100%;
     height: 300px;
@@ -148,6 +167,13 @@
 .skeleton-square-sm {
     width: 32px;
     height: 32px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.skeleton-square-md {
+    width: 40px;
+    height: 40px;
     border-radius: 4px;
     flex-shrink: 0;
 }
@@ -180,6 +206,12 @@
     border-radius: 4px;
 }
 
+.skeleton-button-md {
+    height: 32px;
+    width: 100px;
+    border-radius: 4px;
+}
+
 .skeleton-button-lg {
     height: 44px;
     width: 160px;
@@ -195,6 +227,12 @@
 
 .skeleton-input-sm {
     height: 32px;
+    width: 100%;
+    border-radius: 4px;
+}
+
+.skeleton-input-md {
+    height: 36px;
     width: 100%;
     border-radius: 4px;
 }
