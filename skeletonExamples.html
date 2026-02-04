@@ -36,28 +36,26 @@
 <div id="{{ data.instance_id }}" ng-class="{'dark': c.state.is_dark_mode }" class="dla-weather grid gap-xs">
     
     <!-- SKELETON LOADING STATE -->
-    <div ng-if="data.isLoading" class="flex flex-end">
+    <div ng-if="data.isLoading">
         <div class="flex flex-end">
-            <!-- Location skeleton -->
-            <div id="dla-weather-search-menu-{{ data.instance_id }}" class="position-relative width-fit">
-                <div class="flexgp align-center gap-xs text-gray-blue-7x-nn" style="height: 20px; font-size: 11px;">
-                    <div class="skeleton skeleton-icon" style="display: inline-block; vertical-align: middle; margin-right: 4px; width: 14px; height: 14px;"></div>
-                    <div class="skeleton skeleton-text-sm" style="display: inline-block; width: 120px; vertical-align: middle;"></div>
+            <div class="position-relative width-fit">
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <div class="skeleton skeleton-icon" style="width: 12px; height: 12px;"></div>
+                    <div class="skeleton skeleton-text-sm" style="width: 100px; height: 14px;"></div>
+                    <div class="skeleton skeleton-icon" style="width: 10px; height: 10px;"></div>
                 </div>
             </div>
         </div>
         
-        <div class="flex flex-end flex-wrap align-center gap-xs text-gray-blue text-m">
-            <span class="flex flex-start align-center gap-xs text-gray-blue text-m">
-                <!-- Weather icon skeleton -->
+        <div class="flex flex-end flex-wrap align-center gap-xs">
+            <div style="display: flex; align-items: center; gap: 12px;">
                 <div class="skeleton skeleton-square-lg" style="width: 70px; height: 70px;"></div>
-                <!-- Weather description skeleton -->
-                <div class="skeleton skeleton-text" style="width: 180px;"></div>
-            </span>
-            <!-- Tomorrow forecast skeleton -->
-            <span class="text-sm text-gray-blue text-right wrap-pretty">
-                <div class="skeleton skeleton-text-lg" style="width: 280px;"></div>
-            </span>
+                <div class="skeleton skeleton-text" style="width: 200px; height: 16px;"></div>
+            </div>
+        </div>
+        
+        <div class="flex flex-end">
+            <div class="skeleton skeleton-text" style="width: 250px; height: 14px;"></div>
         </div>
     </div>
 
