@@ -28,6 +28,8 @@ A standardized, pulse-style skeleton loading component library for consistent lo
 <div class="skeleton skeleton-text skeleton-2-3"></div>
 ```
 
+**Note:** Skeleton elements have no default margins. Control spacing using container gap properties (e.g., `display: flex; flex-direction: column; gap: 8px;`) or add margin utilities as needed.
+
 ### Avatar
 ```html
 <div class="skeleton skeleton-avatar"></div>
@@ -57,6 +59,8 @@ Perfect for user profiles, comments, or posts:
     </div>
 </div>
 ```
+
+The `skeleton-card-content` already has `gap: 8px` for spacing between elements.
 
 ### 2. List Pattern
 For navigation or item lists:
@@ -106,8 +110,9 @@ For loading forms:
 - `.skeleton` - Base skeleton element (required)
 
 ### Text & Content
-- `.skeleton-text` - Standard text line (12px height)
+- `.skeleton-text` - Standard text line (14px height)
 - `.skeleton-text-lg` - Large text (16px)
+- `.skeleton-text-md` - Medium text (12px)
 - `.skeleton-text-sm` - Small text (10px)
 - `.skeleton-title` - Title/heading (20px height, 70% width)
 - `.skeleton-heading` - Large heading (24px height, 60% width)
@@ -124,26 +129,31 @@ For loading forms:
 ### Avatars
 - `.skeleton-avatar-sm` - 32px circle
 - `.skeleton-avatar` - 40px circle
+- `.skeleton-avatar-md` - 48px circle
 - `.skeleton-avatar-lg` - 64px circle
 - `.skeleton-avatar-xl` - 96px circle
 
 ### Images
 - `.skeleton-image-sm` - 120px height
+- `.skeleton-image-md` - 160px height
 - `.skeleton-image` - 200px height
 - `.skeleton-image-lg` - 300px height
 
 ### Shapes
 - `.skeleton-icon` - 24px square icon
 - `.skeleton-square-sm` - 32px square
+- `.skeleton-square-md` - 40px square
 - `.skeleton-square` - 48px square
 - `.skeleton-square-lg` - 64px square
 
 ### Buttons & Inputs
-- `.skeleton-button-sm` - Small button
-- `.skeleton-button` - Standard button
-- `.skeleton-button-lg` - Large button
-- `.skeleton-input-sm` - Small input
-- `.skeleton-input` - Standard input
+- `.skeleton-button-sm` - Small button (28px height)
+- `.skeleton-button-md` - Medium button (32px height)
+- `.skeleton-button` - Standard button (36px height)
+- `.skeleton-button-lg` - Large button (44px height)
+- `.skeleton-input-sm` - Small input (32px height)
+- `.skeleton-input-md` - Medium input (36px height)
+- `.skeleton-input` - Standard input (40px height)
 
 ### Layout Components
 - `.skeleton-card` - Card container with flex layout
@@ -290,9 +300,27 @@ function($scope) {
 
 1. **Match the layout**: Skeleton should mirror your actual content structure
 2. **Use appropriate widths**: Vary text line widths (full, 3/4, 2/3, 1/2) for natural appearance
-3. **Maintain hierarchy**: Use larger skeleton elements for titles/headings
-4. **Consistent spacing**: Match gaps and padding of real content
-5. **Don't overdo it**: Show skeleton only for initial loads, not every update
+3. **Control spacing with containers**: Use `gap` (flexbox/grid) or margin utilities instead of relying on default margins
+4. **Maintain hierarchy**: Use larger skeleton elements for titles/headings
+5. **Consistent spacing**: Match gaps and padding of real content
+6. **Don't overdo it**: Show skeleton only for initial loads, not every update
+
+### Spacing Examples
+```html
+<!-- Using flexbox gap -->
+<div style="display: flex; flex-direction: column; gap: 8px;">
+    <div class="skeleton skeleton-text"></div>
+    <div class="skeleton skeleton-text"></div>
+    <div class="skeleton skeleton-text skeleton-2-3"></div>
+</div>
+
+<!-- Using margin utilities -->
+<div>
+    <div class="skeleton skeleton-text skeleton-mb-2"></div>
+    <div class="skeleton skeleton-text skeleton-mb-2"></div>
+    <div class="skeleton skeleton-text skeleton-2-3"></div>
+</div>
+```
 
 ## Accessibility
 
