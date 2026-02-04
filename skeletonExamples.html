@@ -30,3 +30,84 @@
         </div>
     </div>
 </div>
+
+
+
+<div id="{{ data.instance_id }}" ng-class="{'dark': c.state.is_dark_mode }" class="dla-weather grid gap-xs">
+    
+    <!-- SKELETON LOADING STATE -->
+    <div ng-if="data.isLoading" class="flex flex-end">
+        <div class="flex flex-end">
+            <!-- Location skeleton -->
+            <div id="dla-weather-search-menu-{{ data.instance_id }}" class="position-relative width-fit">
+                <div class="flexgp align-center gap-xs text-gray-blue-7x-nn" style="height: 20px; font-size: 11px;">
+                    <div class="skeleton skeleton-icon" style="display: inline-block; vertical-align: middle; margin-right: 4px; width: 14px; height: 14px;"></div>
+                    <div class="skeleton skeleton-text-sm" style="display: inline-block; width: 120px; vertical-align: middle;"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="flex flex-end flex-wrap align-center gap-xs text-gray-blue text-m">
+            <span class="flex flex-start align-center gap-xs text-gray-blue text-m">
+                <!-- Weather icon skeleton -->
+                <div class="skeleton skeleton-square-lg" style="width: 70px; height: 70px;"></div>
+                <!-- Weather description skeleton -->
+                <div class="skeleton skeleton-text" style="width: 180px;"></div>
+            </span>
+            <!-- Tomorrow forecast skeleton -->
+            <span class="text-sm text-gray-blue text-right wrap-pretty">
+                <div class="skeleton skeleton-text-lg" style="width: 280px;"></div>
+            </span>
+        </div>
+    </div>
+
+    <!-- ACTUAL CONTENT -->
+    <div ng-if="!data.isLoading">
+        <div class="flex flex-end">
+            <div id="dla-weather-search-menu-{{ data.instance_id }}" class="position-relative width-fit">
+                <button id="dla-weather-search-menu-toggle-button-{{ data.instance_id }}" ng-click="c.handlers.setToggled()" aria-label="toggle the location search menu" aria-expanded="{{ c.state.toggled }}" aria-controls="dla-weather-search-fly-out-menu-{{ data.instance_id }}" uib-tooltip="Search locations to provide weather information" tooltip-class="dla-weather-search-menu-toggle-button">
+                    <i class="fa fa-map-pin fa-xs text-gray-blue" aria-hidden="true"></i>
+                    <span class="text-sm text-gray-blue text-bold">{{ data.location.city && data.location.state_province ? (data.location.city + ', ' + data.location.state_province : data.location.name) }}</span>
+                    <i class="fa fa-chevron-down text-gray-blue fa-sm" aria-hidden="true"></i>
+                </button>
+                <div id="dla-weather-search-fly-out-menu-{{ data.instance_id }}" ng-show="c.state.toggled" ng-class="{'in': c.state.toggled, 'desktop': !c.state.isMobile}" class="dla-weather-search-fly-out-menu">
+                    <div class="dla-weather-search-menu-fly-out-header">
+                        <p>
+                            ${Location Search}
+                        </p>
+                        <button ng-if="c.state.isMobile" id="dla-weather-search-menu-close-button-{{ data.instance_id }}" class="modal-close-button" ng-click="c.handlers.setToggled()" ng-keydown="c.handlers.onKeyToggleMenu($event, c.state.isMobile, false)" aria-label="Close the location search menu">
+                            <i class="fa fa-close" aria-hidden="true" class="btn"></i><span class="sr-only">Close</span>
+                        </button>
+                    </div>
+                    <form ng-submit="c.handlers.updateLocation($event)" class="dla-weather-search-menu-form grid gap" data-cast-form>
+                        <label for="location-search">
+                            <span class="sr-only">${Search locations}</span>
+                            <input type="text" ng-model="c.state.search" placeholder="Search..." id="location_search_{{ data.instance_id }}" name="location_search" ng-keydown="c.handlers.onKeyToggleMenu($event, !c.state.isMobile, false)"/>
+                        </label>
+                        <fieldset class="margin-xs">
+                            <legend class="text-bold">${Location List}</legend>
+                            <p ng-if="c.handlers.getFilteredLocations().length <= 0" class="margin-left-bold-m[ No locations found for your search]</p>
+                            <label ng-repeat="location in c.handlers.getFilteredLocations() track by location.sys_id" for="{{ location.name }}_{{ data.instance_id }}" class="form-inline">
+                                <input type="radio" id="{{ location.name }}_{{ data.instance_id }}" name="location_selection" value="{{ location.sys_id }}" ng-model="c.state.location" />
+                                {{ location.city && location.state_province ? (location.city + ', ' + location.state_province) : location.name }}
+                            </label>
+                        </fieldset>
+                        <div class="dla-weather-search-menu-footer flex flex-end align-center gap-sm">
+                            <button class="butn butn-primary-outline" type="button" ng-click="c.handlers.handleCancel()">Cancel</button>
+                            <button class="butn butn-primary" type="submit" ng-keydown="c.handlers.onKeyToggleMenu($event, false, true)">Submit</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-end flex-wrap align-center gap-xs text-gray-blue text-m">
+            <span class="flex flex-start align-center gap-xs text-gray-blue text-m">
+                <img ng-if="c.state.forecast[0].icon" src="{{ c.handlers.getIconImage() }}" width="70px" height="70px" alt="{{ c.state.forecast[0].shortForecast }}"/>
+                {{ c.state.forecast[0].shortForecast }}
+            </span>
+            ${||}
+            <span class="text-sm text-gray-blue text-right wrap-pretty">${Tomorrow} {{ c.state.tomorrowForecast.shortForecast }}, {{ c.state.tomorrowForecast.temperature }}${&#8457;}</span>
+        </div>
+    </div>
+</div>
