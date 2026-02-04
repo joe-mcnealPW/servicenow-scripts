@@ -8,3 +8,25 @@
         <div class="skeleton skeleton-icon" style="margin-left: auto;"></div>
     </div>
 </div>
+
+
+
+<!-- Skeleton Loading State -->
+<div ng-if="c.loading || data.isLoading">
+    <div class="item-container">
+        <div class="content-item" ng-repeat="i in [1,2,3]">
+            <div class="content-title">
+                <!-- Title skeleton -->
+                <div class="skeleton skeleton-title" style="width: 60%; margin-bottom: 8px;"></div>
+                <!-- Date skeleton -->
+                <div class="skeleton skeleton-text-sm" style="width: 100px;"></div>
+            </div>
+            <div class="content-body body-small">
+                <!-- Rich text content skeleton -->
+                <div class="skeleton skeleton-text" style="width: 95%; margin-bottom: 6px;"></div>
+                <div class="skeleton skeleton-text" style="width: 88%; margin-bottom: 6px;"></div>
+                <div class="skeleton skeleton-text" style="width: 75%;"></div>
+            </div>
+        </div>
+    </div>
+</div>
