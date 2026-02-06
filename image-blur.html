@@ -2,25 +2,21 @@
     height: 300px;
     width: auto;
     position: relative;
-    overflow: hidden;
 }
 
-.img-container::before {
-    content: '';
+.img-blur {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    background-image: inherit;
-    background-size: cover;
-    background-position: center;
-    filter: blur(20px);
-    transform: scale(1.1);
+    object-fit: cover;
+    filter: blur(50px);
+    transform: scale(1.2);
     z-index: 0;
 }
 
-img {
+.img-main {
     width: 100%;
     height: 100%;
     object-fit: contain;
@@ -29,8 +25,12 @@ img {
 }
 
 
-<div class="img-container" style="background-image: url('{{article.enclosure.url}}')">
-    <img src="{{article.enclosure.url}}"
+<div class="img-container">
+    <img class="img-blur" 
+         src="{{article.enclosure.url}}"
+         alt="Background">
+    <img class="img-main"
+         src="{{article.enclosure.url}}"
          onerror="this.onerror=null; this.src='x_e_d1a_d1a_connect.news_default_image.jpg';"
          alt="Article {{$index + 1}}">
 </div>
