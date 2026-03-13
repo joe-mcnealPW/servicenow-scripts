@@ -1,0 +1,65 @@
+<div ng-if="data.is_valid && data.topic.is_valid && (loptions.topic_side_nav_id || c.state.current_side_nav_id == options.topic_side_nav_id)" class="dlac-t-banner">
+  <div class="link-container">
+    <a ng-if="data.show_topic_buttons" class="butn butn-secondary-outline gap" href="now/nav/ui/classic/params/target/sn_cd_content_base_list.do%3Fsysparm_userpref_module%3Daa85f04aeb6e51036b1b2bc0352284f%26sysparm_query%3DversionISEMPTY%255EORversion.latest%253Dtrue%2535EEQ%26%26sysparm_order%3Dsys_updated_on%26sysparm_order_direction%3Ddesc" target="_blank">
+      <i class="fa fa-edit" aria-hidden="true"></i>
+      ${Edit Content}
+    </a>
+    <a ng-if="data.show_topic_buttons" class="butn butn-secondary-outline gap" href="now/nav/ui/classic/params/target/sn_cd_create_content.do" target="_blank">
+      <i class="fa fa-add" aria-hidden="true"></i>
+      ${Add Content}
+    </a>
+    <a ng-if="data.show_topic_buttons" class="butn butn-secondary-outline gap" ng-href="{{data.topic_plus_url}}" target="_blank">
+      <i class="fa fa-edit" aria-hidden="true"></i>
+      ${Edit Topic}
+    </a>
+  </div>
+  <div class="banner-content">
+    <span class="text-xxxl" ng-style="c.fontWeight"><div ng-style="c.textStyle">
+      {{ data.topic_name }}</div></span>
+    <img ng-if="data.bannerImage" ng-src="{{data.bannerImage}}" class="banner-icon" alt="{{data.topic_name}}"/>
+  </div>
+</div>
+
+
+
+.dlac-t-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#spec-text * {
+  color: $color-white;
+}
+
+strong {
+  font-weight: bolder;
+}
+
+.link-container {
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+
+  .butn {
+    text-transform: capitalize;
+    width: 160px;
+    border-radius: 30px;
+    margin-bottom: 5px;
+    background: rgba(255, 255, 255, .2);
+    border: none;
+    color: white;
+  }
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  .banner-icon {
+    max-height: 80px;
+    object-fit: contain;
+  }
+}
