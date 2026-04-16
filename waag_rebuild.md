@@ -1606,3 +1606,143 @@ Before shipping:
 8. Two WaaG widgets on the same page → opening the More menu on one should not affect the other.
 9. Resize the window rapidly → debounce should kick in (no thrash).
 10. Destroy the widget (navigate away) → no console errors about stale event listeners.
+
+
+---
+
+# Updates
+
+# WaaG Widget — Patches
+
+Three small changes:
+
+1. Align the More tab's vertical position with the primary tabs.
+2. Replace the right-side chevron with a left-side plus sign.
+3. Add a summed record-count badge on the right side of the More tab.
+
+---
+
+## 1. HTML — More button
+
+Find the existing More button inside the `.more-container`:
+
+```html
+<button type="button"
+        class="tab more-tab"
+        id="more-button-{{data.instance_id}}"
+        aria-haspopup="true"
+        aria-expanded="{{ c.state.show_more_menu }}"
+        aria-controls="tab-extras-fly-out-menu-{{data.instance_id}}"
+        ng-click="c.handlers.toggleMoreMenu()">
+  ${More}
+  <i class="fa" ng-class="c.state.show_more_menu ? 'fa-chevron-up' : 'fa-chevron-down'" aria-hidden="true"></i>
+</button>
+```
+
+Replace with:
+
+```html
+<button type="button"
+        class="tab more-tab"
+        id="more-button-{{data.instance_id}}"
+        aria-haspopup="true"
+        aria-expanded="{{ c.state.show_more_menu }}"
+        aria-controls="tab-extras-fly-out-menu-{{data.instance_id}}"
+        ng-click="c.handlers.toggleMoreMenu()">
+  <i class="fa fa-plus more-tab-icon" aria-hidden="true"></i>
+  <span>${More}</span>
+  <span ng-if="options.show_tab_count_badge == 'true' && c.handlers.getSecondaryRecordCount() > 0"
+        class="tab-badge">
+    {{ c.handlers.getBadgeNumber(c.handlers.getSecondaryRecordCount()) }}
+  </span>
+</button>
+```
+
+The badge reuses the existing `.tab-badge` class so styling is identical to the primary tabs. It's gated on both the `show_tab_count_badge` option and the sum being greater than 0.
+
+---
+
+## 2. Controller — new handler
+
+Add this alongside the other handlers in `c.handlers`:
+
+```javascript
+/**
+ * Sum the record counts of all tabs currently in the overflow dropdown.
+ * Recomputed on read (not cached) so it stays in sync with the live
+ * primary/secondary split after promotions, refreshes, and filters.
+ */
+getSecondaryRecordCount: function() {
+  var secondary = c.state.secondary_tabs || [];
+  var total = 0;
+  for (var i = 0; i < secondary.length; i++) {
+    var count = Number(secondary[i].details && secondary[i].details.record_count) || 0;
+    total += count;
+  }
+  return total;
+}
+```
+
+A passing note on performance: this runs on every digest cycle because it's bound in the template. For the tab counts you'd realistically see (a handful of overflowed tabs, each a numeric addition), this is negligible — no need to cache. If it ever starts showing up in profiler traces, the cheap fix is to memoize it against a `secondary_tabs` reference check.
+
+---
+
+## 3. SCSS — alignment fix and left icon spacing
+
+The vertical misalignment came from the extra `.more-tab` block redefining `display: inline-flex` on top of the `.tab` inheritance, which was shifting the baseline subtly. Easiest fix: let `.more-tab` inherit `.tab` cleanly, and only scope the icon.
+
+In the `.tab-wrapper .more-container` block, find:
+
+```scss
+.more-container {
+  position: relative;
+  display: inline-block;
+
+  .more-tab {
+    // inherits .tab styling; distinct icon appended by template
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .more-options-container {
+    // ...
+```
+
+Replace the `.more-tab` rule with:
+
+```scss
+.more-container {
+  position: relative;
+  display: inline-flex;   // match the flex context of sibling .tab buttons
+  align-items: stretch;   // stretch so the child button fills vertically
+
+  .more-tab {
+    // No overrides needed — .tab above handles padding, font, gap.
+    // Only style the leading icon here.
+    .more-tab-icon {
+      font-size: 12px;
+      line-height: 1;
+    }
+  }
+
+  .more-options-container {
+    // ...
+```
+
+Two changes that fix the vertical gap:
+
+- `.more-container` becomes `display: inline-flex` with `align-items: stretch`. Before, it was `inline-block`, which meant the container sat on the text baseline of the tab wrapper rather than stretching to the tab wrapper's full height. The tiny gap you saw below the More button was the wrapper's default baseline offset.
+- `.more-tab` no longer redeclares `display` or `gap` — it inherits them cleanly from `.tab`, which is what the sibling tabs use. Previously `.more-tab`'s own `inline-flex` was competing with `.tab`'s `inline-flex` and both have the same gap, but the double declaration created a brief cascade ambiguity that some browsers resolved differently.
+
+---
+
+## Summary of what changes visually
+
+- More button sits at the exact same vertical position as sibling primary tabs — no gap below.
+- Plus icon (`fa-plus`) appears on the left of the word "More".
+- Numeric badge appears on the right when the overflow tabs collectively have records and `show_tab_count_badge` is on. The badge updates automatically when tabs move in and out of the overflow (e.g., viewport resize, active-tab promotion, filters changing which tabs have records).
+
+No server script or option schema changes. All other functionality preserved.
+
+
