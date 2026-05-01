@@ -29,9 +29,9 @@
 │                              ▼                               │
 │  ┌─────────────────────────────────────────────────────────┐ │
 │  │ HTML Template (AngularJS)                                │ │
-│  │  - Title bar (record display name)                       │ │
+│  │  - Title bar (record display name, white text on hero)   │ │
 │  │  - Details card                                          │ │
-│  │     ├── Header row (5-col grid, configurable fields)     │ │
+│  │     ├── Header row (flex grid, configurable fields)      │ │
 │  │     ├── Primary section (stacked, full-width)            │ │
 │  │     └── "More Details" expander → 2-col details grid     │ │
 │  └─────────────────────────────────────────────────────────┘ │
@@ -148,19 +148,6 @@ The widget should accept everything via options *or* URL params, with URL params
     "hint": "Sys ID of the record. Overridden by ?sys_id= URL param."
   },
   {
-    "name": "show_back_link",
-    "label": "Show Back Link",
-    "type": "boolean",
-    "default_value": "true"
-  },
-  {
-    "name": "back_link_url",
-    "label": "Back Link URL",
-    "type": "string",
-    "default_value": "/sp?id=index",
-    "hint": "URL to return to when Back is clicked."
-  },
-  {
     "name": "allow_default_config",
     "label": "Allow Default Fallback",
     "type": "boolean",
@@ -169,6 +156,8 @@ The widget should accept everything via options *or* URL params, with URL params
   }
 ]
 ```
+
+(Back link options removed — title bar is now display-only.)
 
 ---
 
@@ -335,7 +324,6 @@ function getDefaultFields(rec, section) {
   // Introspects the dictionary and picks sensible fields per section.
 
   if (section === 'header') {
-    // Always-useful header fields, in order. Only include if they exist on this record's table.
     var candidates = [
       pickFirstExistingField(rec, ['number', 'name']),
       pickFirstExistingField(rec, ['opened_by', 'caller_id', 'requested_for', 'requested_by']),
@@ -357,26 +345,20 @@ function getDefaultFields(rec, section) {
   }
 
   if (section === 'details') {
-    // Walk the dictionary and collect everything that isn't already in header/primary,
-    // isn't a system field, has a value, and isn't a large unbounded field.
     var excluded = {
       number: 1, name: 1, opened_by: 1, caller_id: 1, requested_for: 1, requested_by: 1,
       state: 1, priority: 1, sys_updated_on: 1, sys_created_on: 1,
       short_description: 1, description: 1
     };
-    var skipPrefixes = ['sys_domain', 'sys_class_name'];
     var skipTypes = { 'collection': 1, 'password2': 1, 'password': 1, 'script': 1, 'script_plain': 1, 'xml': 1 };
 
     var fields = [];
-    var elements = rec.getElements();  // GlideElement array for all fields on this record
+    var elements = rec.getElements();
     for (var i = 0; i < elements.size(); i++) {
       var el = elements.get(i);
       var name = el.getName() + '';
       if (excluded[name]) continue;
-      if (name.indexOf('sys_') === 0 && name !== 'sys_id') {
-        // Skip most sys_* fields — they're rarely useful to end users
-        continue;
-      }
+      if (name.indexOf('sys_') === 0 && name !== 'sys_id') continue;
       var ed = el.getED();
       var type = ed.getInternalType() + '';
       if (skipTypes[type]) continue;
@@ -387,7 +369,6 @@ function getDefaultFields(rec, section) {
       fields.push({ field_name: name, _label: ed.getLabel() + '' });
     }
 
-    // Sort alphabetically by label for predictable ordering, cap at 20
     fields.sort(function(a, b) { return a._label.localeCompare(b._label); });
     return fields.slice(0, 20).map(function(f) { return { field_name: f.field_name }; });
   }
@@ -409,7 +390,6 @@ function buildTitle(rec, config) {
   if (config && config.title_field) {
     return rec.getDisplayValue(config.title_field);
   }
-  // Default: try number, then name, then display value
   return rec.getDisplayValue('number') ||
          rec.getDisplayValue('name') ||
          rec.getDisplayValue() ||
@@ -465,14 +445,19 @@ If you later hit a case where a string field needs non-default rendering (e.g. a
 
 ## 6. HTML Template — Structure
 
+Layout uses **flexbox throughout** for spacing — no Bootstrap row/col grids inside the card. Vertical rhythm is controlled by `gap` on flex containers so spacing between a label and its value, between fields, and between sections is consistent and easy to tune from one place.
+
+Typography uses **predefined utility classes** that already exist in the portal theme:
+
+- `title-extra-large` — the "Details" section heading
+- `title-medium` — every field label, plus the "More Details" toggle
+- `body-large` — every field value
+
 ```html
 <div class="record-view">
-  <!-- Title bar -->
+  <!-- Title bar (white text on hero band, no back link) -->
   <div class="record-view-header">
-    <a ng-if="options.show_back_link" ng-href="{{options.back_link_url}}" class="back-link">
-      <i class="fa fa-angle-left"></i> Back
-    </a>
-    <h1>{{data.title}}</h1>
+    <h1 class="record-view-title">{{data.title}}</h1>
   </div>
 
   <!-- Error state -->
@@ -480,38 +465,39 @@ If you later hit a case where a string field needs non-default rendering (e.g. a
     <div class="panel-body">{{data.error}}</div>
   </div>
 
-  <!-- Main card -->
-  <div class="panel panel-default" ng-if="!data.error">
-    <div class="panel-body">
-      <h4 class="section-title">Details</h4>
+  <!-- Main white card -->
+  <div class="record-view-card" ng-if="!data.error">
+    <h4 class="title-extra-large">Details</h4>
 
-      <!-- Header section: key/value grid -->
-      <div class="row header-row">
-        <div class="col-md-2 col-sm-4 col-xs-6 header-cell"
-             ng-repeat="f in data.sections.header track by f.name">
-          <div class="field-label">{{f.label}}:</div>
-          <div class="field-value" ng-include="'field-value-tpl'"></div>
-        </div>
+    <!-- Header section: flex row, wraps on narrow viewports -->
+    <div class="header-row">
+      <div class="header-cell field-block"
+           ng-repeat="f in data.sections.header track by f.name">
+        <div class="title-medium field-label">{{f.label}}:</div>
+        <div class="body-large field-value" ng-include="'field-value-tpl'"></div>
       </div>
+    </div>
 
-      <!-- Primary section: full-width stacked -->
-      <div class="primary-section" ng-repeat="f in data.sections.primary track by f.name">
-        <div class="field-label">{{f.label}}</div>
-        <div class="field-value primary-value" ng-include="'field-value-tpl'"></div>
+    <!-- Primary section: full-width stacked fields -->
+    <div class="primary-section">
+      <div class="field-block"
+           ng-repeat="f in data.sections.primary track by f.name">
+        <div class="title-medium field-label">{{f.label}}:</div>
+        <div class="body-large field-value primary-value" ng-include="'field-value-tpl'"></div>
       </div>
+    </div>
 
-      <!-- More Details expander -->
-      <div ng-if="data.hasDetails" class="details-section">
-        <a ng-click="showDetails = !showDetails" class="more-details-toggle">
-          <i class="fa" ng-class="{'fa-angle-down': !showDetails, 'fa-angle-up': showDetails}"></i>
-          {{showDetails ? 'Less Details' : 'More Details'}}
-        </a>
-        <div ng-if="showDetails" class="row details-grid">
-          <div class="col-md-6 details-cell"
-               ng-repeat="f in data.sections.details track by f.name">
-            <div class="field-label">{{f.label}}</div>
-            <div class="field-value" ng-include="'field-value-tpl'"></div>
-          </div>
+    <!-- More Details expander -->
+    <div ng-if="data.hasDetails" class="details-section">
+      <a ng-click="showDetails = !showDetails" class="title-medium more-details-toggle">
+        {{showDetails ? 'Less Details' : 'More Details'}}
+        <i class="fa" ng-class="{'fa-angle-down': !showDetails, 'fa-angle-up': showDetails}"></i>
+      </a>
+      <div ng-if="showDetails" class="details-grid">
+        <div class="details-cell field-block"
+             ng-repeat="f in data.sections.details track by f.name">
+          <div class="title-medium field-label">{{f.label}}:</div>
+          <div class="body-large field-value" ng-include="'field-value-tpl'"></div>
         </div>
       </div>
     </div>
@@ -548,10 +534,11 @@ If you later hit a case where a string field needs non-default rendering (e.g. a
 
 **Key patterns:**
 
-- `ng-include` with the named `<script type="text/ng-template">` gives you one shared renderer for all three sections. No duplication.
-- `ng-switch` on `render_as` is how types branch cleanly.
-- Header row uses Bootstrap's 2-col-on-desktop grid (`col-md-2`) — 6 fields fit on one row at desktop width, wrapping on tablet. Adjust to `col-md-2` or `col-md-3` depending on typical header field count.
-- "More Details" is just a client-side toggle — no round-trip needed since all fields are already loaded.
+- **`field-block`** is the shared atom: a flex column that pairs a label with its value. Used in all three sections, so vertical spacing between label and value is identical everywhere — set once via `gap` on `.field-block`.
+- **`ng-include`** with the named template gives one shared renderer for all three sections — no duplication.
+- **`ng-switch`** on `render_as` is how types branch cleanly.
+- **No Bootstrap grid inside the card.** Header, primary, and details sections all use flex containers with `gap` and `flex-wrap` for responsive behavior.
+- **"More Details"** is a client-side toggle — no round-trip needed since all fields are already loaded.
 
 ---
 
@@ -580,61 +567,131 @@ Thin on purpose — all the real work happens server-side. The client just trust
 
 ## 8. CSS — Skeleton
 
+Spacing tokens are defined once at the top of the widget scope and reused via `gap` on flex containers. Adjust `--field-gap` and `--section-gap` to retune the whole layout from one place.
+
 ```scss
 .record-view {
+  // Spacing tokens — tune the whole layout from here
+  --label-value-gap: 6px;   // between a label and its value (inside field-block)
+  --field-gap: 20px;        // between adjacent field-blocks within a section
+  --section-gap: 28px;      // between sections (header → primary → details)
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  // ── Title bar: white text on hero band, no back link ────────────────────
   .record-view-header {
-    background: #2b5f8a;  // hero band color from mockup
-    color: #fff;
-    padding: 20px;
-    margin-bottom: 20px;
-    border-radius: 4px;
-
-    h1 { margin: 0; font-size: 28px; font-weight: 300; }
-    .back-link { color: #fff; opacity: 0.85; font-size: 13px; }
+    background: #2b5f8a;
+    padding: 32px 40px;
+    border-radius: 8px;
   }
 
-  .section-title {
-    font-weight: 600;
-    margin-bottom: 16px;
+  .record-view-title {
+    margin: 0;
+    color: #fff;             // record name is white per spec
+    font-weight: 300;
+    font-size: 32px;
+    line-height: 1.2;
   }
 
-  .header-row {
-    margin-bottom: 20px;
-    .header-cell { margin-bottom: 12px; }
+  // ── Main white card ─────────────────────────────────────────────────────
+  .record-view-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 32px 40px 40px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--section-gap);
+
+    // "Details" heading uses theme utility class .title-extra-large for typography;
+    // we only manage spacing here.
+    .title-extra-large {
+      margin: 0;
+    }
+  }
+
+  // ── Shared atom: a label + its value, vertically stacked ────────────────
+  // Same gap is used in every section so label→value spacing is identical
+  // whether the field is in the header row, primary, or details grid.
+  .field-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--label-value-gap);
+    min-width: 0;  // lets long values truncate/wrap inside a flex parent
   }
 
   .field-label {
-    font-weight: 600;
-    font-size: 13px;
+    // Typography comes from .title-medium utility class.
+    // Only layout-adjacent overrides go here.
     color: #555;
-    margin-bottom: 4px;
   }
 
   .field-value {
-    font-size: 14px;
+    // Typography comes from .body-large utility class.
     color: #333;
+    word-break: break-word;
   }
 
+  // ── Header section: flex row of compact fields, wraps on narrow ─────────
+  .header-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--field-gap);
+
+    .header-cell {
+      flex: 1 1 140px;   // grow/shrink, ~140px min — gives ~6 across at desktop
+    }
+  }
+
+  // ── Primary section: full-width stacked fields ──────────────────────────
   .primary-section {
-    margin-top: 20px;
-    .primary-value { white-space: pre-wrap; }  // preserve line breaks in long text
+    display: flex;
+    flex-direction: column;
+    gap: var(--field-gap);
+
+    .primary-value {
+      white-space: pre-wrap;  // preserve line breaks in long descriptions
+    }
+  }
+
+  // ── Details section: 2-column flex grid ─────────────────────────────────
+  .details-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--field-gap);
   }
 
   .more-details-toggle {
-    display: inline-block;
-    margin-top: 20px;
+    // Typography from .title-medium; layout/affordance handled here.
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     cursor: pointer;
-    font-weight: 600;
+    align-self: flex-start;
   }
 
   .details-grid {
-    margin-top: 16px;
-    padding-top: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--field-gap);
+    padding-top: var(--field-gap);
     border-top: 1px solid #eee;
-    .details-cell { margin-bottom: 16px; }
+
+    .details-cell {
+      flex: 1 1 calc(50% - var(--field-gap));  // 2-up at desktop, full-width on narrow
+      min-width: 0;
+    }
   }
 }
 ```
+
+**Why this gives consistent vertical spacing across sections:**
+
+- Every label/value pair is a `.field-block` with `gap: var(--label-value-gap)`. Header, primary, and details all use the same atom, so the visual rhythm between a label and its value is identical everywhere.
+- Every section sets `gap: var(--field-gap)` on its flex container, so the space between adjacent fields is the same in primary as it is between rows in details.
+- Sections themselves are separated by `gap: var(--section-gap)` on the card. One token controls every "between section" space.
+- Three tokens, one source of truth. Bumping `--field-gap` from `20px` to `24px` retunes the whole card.
 
 ---
 
@@ -681,10 +738,15 @@ This is also what makes the `link` render mode work for reference fields — cli
 
 1. **Scope prefix** — `x_gensync_*` for v1 (placeholder, confirm before build).
 2. **Section names** — `header` / `primary` / `details`.
-3. **Default fallback** — ON. When no config row exists, the widget introspects the dictionary and picks sensible fields automatically (see `getDefaultFields` in §4). Widget works on any table out of the box; admins can add a config row later to customize.
+3. **Default fallback** — ON. When no config row exists, the widget introspects the dictionary and picks sensible fields automatically (see `getDefaultFields` in §4).
 4. **Access control** — standard. Authenticated read, admin write on both config tables. No special roles for v1.
 5. **Portal page ID** — `record-view`.
-6. **Reference field linking** — link to the same widget *only when* the reference target extends `task`. Non-task references (`sys_user`, `sys_user_group`, `cmdb_ci`, etc.) render as plain text display value. Implemented via `TableUtils.getTables()` check in `describeField`, with a per-execution cache so repeated targets don't re-query.
+6. **Reference field linking** — link to the same widget *only when* the reference target extends `task`. Non-task references render as plain text.
+7. **Visual styling** —
+   - Title bar: hero band, record name in **white**, no back link.
+   - Card: `border-radius: 8px`, `padding: 32px 40px 40px 40px`.
+   - Typography: "Details" → `title-extra-large`; all field labels and "More Details" → `title-medium`; all field values → `body-large`.
+   - Layout: flexbox throughout. Three spacing tokens (`--label-value-gap`, `--field-gap`, `--section-gap`) control vertical rhythm consistently across all sections.
 
 No open questions remaining. Ready to build.
 
@@ -692,6 +754,6 @@ No open questions remaining. Ready to build.
 
 ## Summary
 
-One widget, configurable via a parent/child table pair in your scoped app. Server script introspects the field dictionary so it renders reference fields, dates, HTML, and booleans correctly without per-table code. URL-driven so it's embeddable and recursive for task-based references (task → sc_req_item → approval → etc. all link through the same widget). Non-task references render as text. Ships with a smart dictionary-introspection fallback so the widget works on any task table on day one — admins add config rows only when they want to override the defaults.
+One widget, configurable via a parent/child table pair in your scoped app. Server script introspects the field dictionary so it renders reference fields, dates, HTML, and booleans correctly without per-table code. URL-driven so it's embeddable and recursive for task-based references. Non-task references render as text. Layout is flexbox-driven with three spacing tokens for consistent vertical rhythm across header / primary / details, and typography is delegated to the portal's `title-extra-large` / `title-medium` / `body-large` utility classes so the card stays in lockstep with the rest of the theme.
 
 All open questions resolved. Ready for implementation.
