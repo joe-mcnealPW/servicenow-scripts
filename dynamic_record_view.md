@@ -455,7 +455,7 @@ Typography uses **predefined utility classes** that already exist in the portal 
 
 ```html
 <div class="record-view">
-  <!-- Title bar (white text on hero band, no back link) -->
+  <!-- Title bar -->
   <div class="record-view-header">
     <h1 class="record-view-title">{{data.title}}</h1>
   </div>
@@ -469,21 +469,51 @@ Typography uses **predefined utility classes** that already exist in the portal 
   <div class="record-view-card" ng-if="!data.error">
     <h4 class="title-extra-large">Details</h4>
 
-    <!-- Header section: flex row, wraps on narrow viewports -->
+    <!-- Header section -->
     <div class="header-row">
       <div class="header-cell field-block"
            ng-repeat="f in data.sections.header track by f.name">
         <div class="title-medium field-label">{{f.label}}:</div>
-        <div class="body-large field-value" ng-include="'field-value-tpl'"></div>
+        <div class="body-large field-value">
+          <span ng-switch="f.render_as">
+            <span ng-switch-when="link">
+              <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
+              <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
+            </span>
+            <span ng-switch-when="external_link">
+              <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
+              <span ng-if="!f.value">—</span>
+            </span>
+            <span ng-switch-when="badge"><span class="label label-default">{{f.display_value || '—'}}</span></span>
+            <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
+            <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
+            <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
+          </span>
+        </div>
       </div>
     </div>
 
-    <!-- Primary section: full-width stacked fields -->
+    <!-- Primary section -->
     <div class="primary-section">
       <div class="field-block"
            ng-repeat="f in data.sections.primary track by f.name">
         <div class="title-medium field-label">{{f.label}}:</div>
-        <div class="body-large field-value primary-value" ng-include="'field-value-tpl'"></div>
+        <div class="body-large field-value primary-value">
+          <span ng-switch="f.render_as">
+            <span ng-switch-when="link">
+              <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
+              <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
+            </span>
+            <span ng-switch-when="external_link">
+              <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
+              <span ng-if="!f.value">—</span>
+            </span>
+            <span ng-switch-when="badge"><span class="label label-default">{{f.display_value || '—'}}</span></span>
+            <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
+            <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
+            <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
+          </span>
+        </div>
       </div>
     </div>
 
@@ -497,38 +527,26 @@ Typography uses **predefined utility classes** that already exist in the portal 
         <div class="details-cell field-block"
              ng-repeat="f in data.sections.details track by f.name">
           <div class="title-medium field-label">{{f.label}}:</div>
-          <div class="body-large field-value" ng-include="'field-value-tpl'"></div>
+          <div class="body-large field-value">
+            <span ng-switch="f.render_as">
+              <span ng-switch-when="link">
+                <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
+                <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
+              </span>
+              <span ng-switch-when="external_link">
+                <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
+                <span ng-if="!f.value">—</span>
+              </span>
+              <span ng-switch-when="badge"><span class="label label-default">{{f.display_value || '—'}}</span></span>
+              <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
+              <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
+              <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>
   </div>
-
-  <!-- Reusable field renderer — switches on render_as -->
-  <script type="text/ng-template" id="field-value-tpl">
-    <span ng-switch="f.render_as">
-      <span ng-switch-when="link">
-        <a ng-if="f.ref_sys_id"
-           ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">
-          {{f.display_value}}
-        </a>
-        <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
-      </span>
-      <span ng-switch-when="external_link">
-        <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">
-          {{f.display_value || f.value}} <i class="fa fa-external-link"></i>
-        </a>
-        <span ng-if="!f.value">—</span>
-      </span>
-      <span ng-switch-when="badge">
-        <span class="label label-default">{{f.display_value || '—'}}</span>
-      </span>
-      <span ng-switch-when="date">
-        <span title="{{f.value}}">{{f.display_value || 'N/A'}}</span>
-      </span>
-      <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
-      <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
-    </span>
-  </script>
 </div>
 ```
 
