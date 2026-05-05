@@ -4,6 +4,57 @@
 **Goal:** A single Service Portal widget that renders a detail view for *any* task-based (or non-task) record, driven by configuration stored in a custom table. Widget receives a `table` and `sys_id` via URL params or widget options and dynamically resolves which fields to show and how.
 
 ---
+## 0.0 Testing
+---
+
+Dynamic Record View — Tester Guide
+What it does
+The widget renders a portal-friendly detail view for any task-based record. It's driven by a config table — you specify which fields to show and how they're grouped, and the widget handles the rest. If a table has no config, it falls back to sensible defaults so it still renders something.
+For sc_req_item records specifically, it also pulls in the catalog item variables and shows them inside the "More Details" expander.
+How to view a record
+Use this URL pattern in your portal:
+/sp?id=record-view&table=<table_name>&sys_id=<record_sys_id>
+Examples:
+
+Incident: /sp?id=record-view&table=incident&sys_id=<incident sys_id>
+RITM: /sp?id=record-view&table=sc_req_item&sys_id=<ritm sys_id>
+Change: /sp?id=record-view&table=change_request&sys_id=<change sys_id>
+
+You can grab a sys_id from the URL bar of any record opened in the platform UI.
+How to configure which fields show on a table
+Two tables in the scoped app drive this:
+x_g_dla_dla_connec_record_view_config — one record per table you want to customize. Set:
+
+Table — the table you're configuring (e.g. incident)
+Active — must be true for the config to apply
+Title field — optional, which field's value should show as the big title at the top (e.g. number, short_description)
+
+x_g_dla_dla_connec_record_view_field — one record per field you want shown. Set:
+
+Config — points at the parent config record above
+Field name — the dictionary name of the field (e.g. assignment_group, priority)
+Section — must be exactly header, primary, or details (lowercase)
+Order — display order within the section
+Label override — optional, replaces the dictionary label
+
+What the three sections look like
+
+header — the top row of compact key/value pairs (Number, Requester, State, Priority, etc.). Best for short fields. Aim for 4-6.
+primary — full-width stacked fields, always visible. Best for longer text like Short Description and Description.
+details — hidden behind the "More Details" expander, displayed in a 2-column grid. Best for everything else worth seeing.
+
+What to test
+Configure a new table. Pick a task table that doesn't have a config yet (e.g. change_request). Create a config record, add a handful of field records across all three sections, set Active = true. Open a record on that table via the URL above and confirm fields appear in the right sections in the right order.
+Default fallback. Pick a task table with no config (or set the config to Active = false). Open a record. Confirm the widget still renders with sensible defaults — number, opened by, state, priority, dates in the header; short description and description in the primary section; everything else in More Details.
+RITM variables. Open any RITM via the URL. Click "More Details". Confirm the catalog item's variables show up below the regular details fields, with their labels and values.
+Reference field linking. On any record, find a reference field that points to another task record (e.g. an incident's Parent field). Confirm clicking it navigates to the record-view page for that referenced record. References to non-task records (users, groups, CIs) should show as plain text — not links.
+Field that doesn't exist. Add a field record with a Field name that doesn't exist on the target table (e.g. bogus_field on incident). The widget should skip it cleanly without breaking the page. Check the system log for a warning that says the field was skipped.
+Different field types. Configure a config that includes a date, a reference, a choice (state/priority), and a long text field. Confirm dates render as readable dates, choices render as badges, references render as links (if task-based), and long text wraps properly.
+Where to look if something looks wrong
+System logs are tagged with [GENDynamicRecordView] — search that prefix and you'll see exactly what the widget did at each step: which config it loaded, which fields it picked, which fields it skipped, and any errors. Levels are INFO, DEBUG, WARN, ERROR.
+Most common gotcha: if your config doesn't seem to apply, double-check that Active is true and the Table field actually points at the table you're testing.
+
+---
 
 ## 1. Architecture Overview
 
