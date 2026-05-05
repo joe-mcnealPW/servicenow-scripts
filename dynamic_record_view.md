@@ -13,12 +13,12 @@ The widget renders a portal-friendly detail view for any task-based record. It's
 For sc_req_item records specifically, it also pulls in the catalog item variables and shows them inside the "More Details" expander.
 How to view a record
 Use this URL pattern in your portal:
-/sp?id=record-view&table=<table_name>&sys_id=<record_sys_id>
+/sp?id=record_view&table=<table_name>&sys_id=<record_sys_id>
 Examples:
 
-Incident: /sp?id=record-view&table=incident&sys_id=<incident sys_id>
-RITM: /sp?id=record-view&table=sc_req_item&sys_id=<ritm sys_id>
-Change: /sp?id=record-view&table=change_request&sys_id=<change sys_id>
+Incident: /sp?id=record_view&table=incident&sys_id=<incident sys_id>
+RITM: /sp?id=record_view&table=sc_req_item&sys_id=<ritm sys_id>
+Change: /sp?id=record_view&table=change_request&sys_id=<change sys_id>
 
 You can grab a sys_id from the URL bar of any record opened in the platform UI.
 How to configure which fields show on a table
@@ -47,7 +47,7 @@ What to test
 Configure a new table. Pick a task table that doesn't have a config yet (e.g. change_request). Create a config record, add a handful of field records across all three sections, set Active = true. Open a record on that table via the URL above and confirm fields appear in the right sections in the right order.
 Default fallback. Pick a task table with no config (or set the config to Active = false). Open a record. Confirm the widget still renders with sensible defaults — number, opened by, state, priority, dates in the header; short description and description in the primary section; everything else in More Details.
 RITM variables. Open any RITM via the URL. Click "More Details". Confirm the catalog item's variables show up below the regular details fields, with their labels and values.
-Reference field linking. On any record, find a reference field that points to another task record (e.g. an incident's Parent field). Confirm clicking it navigates to the record-view page for that referenced record. References to non-task records (users, groups, CIs) should show as plain text — not links.
+Reference field linking. On any record, find a reference field that points to another task record (e.g. an incident's Parent field). Confirm clicking it navigates to the record_view page for that referenced record. References to non-task records (users, groups, CIs) should show as plain text — not links.
 Field that doesn't exist. Add a field record with a Field name that doesn't exist on the target table (e.g. bogus_field on incident). The widget should skip it cleanly without breaking the page. Check the system log for a warning that says the field was skipped.
 Different field types. Configure a config that includes a date, a reference, a choice (state/priority), and a long text field. Confirm dates render as readable dates, choices render as badges, references render as links (if task-based), and long text wraps properly.
 Where to look if something looks wrong
