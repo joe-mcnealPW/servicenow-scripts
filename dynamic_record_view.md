@@ -251,29 +251,29 @@ DLACDynamicRecordViewUtility.prototype = {
 
           var fieldCount = 0;
           while (fg.next()) {
-  var section = fg.getValue('section') + '';
-  var fieldName = fg.getValue('field_name') + '';
-  var labelOverride = (fg.getValue('label_override') || '') + '';
-
-  var fieldEntry = {
-      field_name: fieldName,
-      label_override: labelOverride
-  };
-
-  if (section === 'header') {
-      cfg.fields.header.push(fieldEntry);
-      fieldCount++;
-  } else if (section === 'primary') {
-      cfg.fields.primary.push(fieldEntry);
-      fieldCount++;
-  } else if (section === 'details') {
-      cfg.fields.details.push(fieldEntry);
-      fieldCount++;
-  } else {
-      this._log('warn', ctx, 'Unknown section value: "' + section +
-          '" (length=' + section.length + ') for field=' + fieldName);
-  }
-}
+            var section = fg.getValue('section') + '';
+            var fieldName = fg.getValue('field_name') + '';
+            var labelOverride = (fg.getValue('label_override') || '') + '';
+          
+            var fieldEntry = {
+                field_name: fieldName,
+                label_override: labelOverride
+            };
+          
+            if (section === 'header') {
+                cfg.fields.header.push(fieldEntry);
+                fieldCount++;
+            } else if (section === 'primary') {
+                cfg.fields.primary.push(fieldEntry);
+                fieldCount++;
+            } else if (section === 'details') {
+                cfg.fields.details.push(fieldEntry);
+                fieldCount++;
+            } else {
+                this._log('warn', ctx, 'Unknown section value: "' + section +
+                    '" (length=' + section.length + ') for field=' + fieldName);
+            }
+          }
           this._log('info', ctx, 'Config loaded successfully. Total fields=' + fieldCount +
               ' (header=' + cfg.fields.header.length +
               ', primary=' + cfg.fields.primary.length +
