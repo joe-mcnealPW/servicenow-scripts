@@ -163,40 +163,13 @@ The widget should accept everything via options *or* URL params, with URL params
 
 ## 4. Server Script — Pseudocode
 
+## 4.1 Script Include
 ```javascript
-while (fg.next()) {
-  var section = fg.getValue('section') + '';
-  var fieldName = fg.getValue('field_name') + '';
-  var labelOverride = (fg.getValue('label_override') || '') + '';
-
-  var fieldEntry = {
-      field_name: fieldName,
-      label_override: labelOverride
-  };
-
-  if (section === 'header') {
-      cfg.fields.header.push(fieldEntry);
-      fieldCount++;
-  } else if (section === 'primary') {
-      cfg.fields.primary.push(fieldEntry);
-      fieldCount++;
-  } else if (section === 'details') {
-      cfg.fields.details.push(fieldEntry);
-      fieldCount++;
-  } else {
-      this._log('warn', ctx, 'Unknown section value: "' + section +
-          '" (length=' + section.length + ') for field=' + fieldName);
-  }
-}
-```
-
-###4.1 Script Include
-```javascript
-var DLACDynamicRecordViewUtility = Class.create();
-DLACDynamicRecordViewUtility.prototype = {
+var GENDynamicRecordViewUtility = Class.create();
+GENDynamicRecordViewUtility.prototype = {
 
   // ── Logging configuration ───────────────────────────────────────────────
-  LOG_PREFIX: 'DLACDynamicRecordView',
+  LOG_PREFIX: 'GENDynamicRecordView',
   LOG_LEVEL: 'debug',  // 'debug' | 'info' | 'warn' | 'error' — controls verbosity
 
   initialize: function () {
