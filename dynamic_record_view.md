@@ -163,6 +163,428 @@ The widget should accept everything via options *or* URL params, with URL params
 
 ## 4. Server Script — Pseudocode
 
+#4.1 Script Include
+```javascript
+var DLACDynamicRecordViewUtility = Class.create();
+DLACDynamicRecordViewUtility.prototype = {
+
+    // ── Logging configuration ───────────────────────────────────────────────
+    LOG_PREFIX: 'DLACDynamicRecordView',
+    LOG_LEVEL: 'debug',  // 'debug' | 'info' | 'warn' | 'error' — controls verbosity
+
+    initialize: function () {
+        this._taskExtensionCache = {};
+        this._log('info', 'initialize', 'Utility instance created');
+    },
+
+    // ── Public methods ──────────────────────────────────────────────────────
+
+    /**
+     * Load the record view config for a given table.
+     * Returns null if no active config exists, or if an error occurs.
+     */
+    loadConfig: function (table) {
+        var ctx = 'loadConfig';
+        this._log('info', ctx, 'Called with table=' + table);
+
+        if (!table) {
+            this._log('warn', ctx, 'No table provided — returning null');
+            return null;
+        }
+
+        try {
+            var gr = new GlideRecord('x_g_dla_dla_connec_record_view_config');
+            gr.addQuery('table', table);
+            gr.addQuery('active', true);
+            gr.setLimit(1);
+            gr.query();
+
+            this._log('debug', ctx, 'Query encoded: ' + gr.getEncodedQuery());
+
+            if (!gr.next()) {
+                this._log('info', ctx, 'No active config found for table=' + table);
+                return null;
+            }
+
+            var cfg = {
+                sys_id: gr.getUniqueValue(),
+                title_field: gr.getValue('title_field'),
+                fields: { header: [], primary: [], details: [] }
+            };
+
+            this._log('debug', ctx, 'Config record loaded: sys_id=' + cfg.sys_id +
+                ', title_field=' + cfg.title_field);
+
+            // Load child field rows
+            var fg = new GlideRecord('x_g_dla_dla_connec_record_view_field');
+            fg.addQuery('config', cfg.sys_id);
+            fg.orderBy('section');
+            fg.orderBy('order');
+            fg.query();
+
+            var fieldCount = 0;
+            while (fg.next()) {
+                var section = fg.getValue('section');
+                if (!cfg.fields[section]) {
+                    this._log('warn', ctx, 'Skipping field with unknown section="' + section +
+                        '" field=' + fg.getValue('field_name'));
+                    continue;
+                }
+                cfg.fields[section].push({
+                    field_name: fg.getValue('field_name'),
+                    label_override: fg.getValue('label_override')
+                });
+                fieldCount++;
+            }
+
+            this._log('info', ctx, 'Config loaded successfully. Total fields=' + fieldCount +
+                ' (header=' + cfg.fields.header.length +
+                ', primary=' + cfg.fields.primary.length +
+                ', details=' + cfg.fields.details.length + ')');
+            this._log('debug', ctx, 'Full config: ' + JSON.stringify(cfg));
+
+            return cfg;
+
+        } catch (err) {
+            this._log('error', ctx, 'Exception while loading config: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return null;
+        }
+    },
+
+    /**
+     * Build the array of field descriptors for a given section.
+     * Falls back to default field selection when no config is provided.
+     */
+    buildSection: function (rec, config, section) {
+        var ctx = 'buildSection[' + section + ']';
+        var self = this;
+
+        try {
+            this._log('debug', ctx, 'Called. config provided=' + !!config +
+                ', table=' + (rec ? rec.getTableName() : 'null'));
+
+            if (!rec) {
+                this._log('error', ctx, 'No record provided — returning empty array');
+                return [];
+            }
+
+            var fields;
+            var usingConfig = !!(config && config.fields && config.fields[section] &&
+                config.fields[section].length > 0);
+
+            if (usingConfig) {
+                fields = config.fields[section];
+                this._log('info', ctx, 'Using configured fields. count=' + fields.length);
+            } else {
+                fields = this._getDefaultFields(rec, section);
+                this._log('info', ctx, 'Using default fields (no config). count=' + fields.length);
+            }
+
+            this._log('debug', ctx, 'Field list: ' + JSON.stringify(fields));
+
+            var descriptors = fields.map(function (f) {
+                return self._describeField(rec, f);
+            }).filter(function (d) {
+                return d !== null;
+            });
+
+            this._log('info', ctx, 'Built ' + descriptors.length + ' descriptor(s) (filtered from ' +
+                fields.length + ' raw)');
+
+            return descriptors;
+
+        } catch (err) {
+            this._log('error', ctx, 'Exception: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return [];
+        }
+    },
+
+    /**
+     * Resolve the title for the record. Uses config.title_field if set,
+     * otherwise falls back to short_description → number → record display value.
+     */
+    buildTitle: function (rec, config) {
+        var ctx = 'buildTitle';
+
+        try {
+            if (!rec) {
+                this._log('warn', ctx, 'No record provided');
+                return 'Record';
+            }
+
+            if (config && config.title_field) {
+                var configured = rec.getDisplayValue(config.title_field);
+                this._log('info', ctx, 'Using configured title_field="' + config.title_field +
+                    '" → "' + configured + '"');
+                if (configured) return configured;
+                this._log('warn', ctx, 'Configured title_field returned empty — falling back');
+            }
+
+            var fallback = rec.getDisplayValue('short_description') ||
+                rec.getDisplayValue('number') ||
+                rec.getDisplayValue() ||
+                'Record';
+
+            this._log('info', ctx, 'Using fallback title → "' + fallback + '"');
+            return fallback;
+
+        } catch (err) {
+            this._log('error', ctx, 'Exception: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return 'Record';
+        }
+    },
+
+    // ── Private helpers ─────────────────────────────────────────────────────
+
+    /**
+     * Cache-aware check for whether a target table extends task.
+     * Cache lives on the instance — survives across calls within a single execution.
+     */
+    _targetExtendsTask: function (targetTable) {
+        var ctx = '_targetExtendsTask';
+        if (!targetTable) return false;
+
+        if (this._taskExtensionCache.hasOwnProperty(targetTable)) {
+            this._log('debug', ctx, 'Cache hit for "' + targetTable + '" → ' +
+                this._taskExtensionCache[targetTable]);
+            return this._taskExtensionCache[targetTable];
+        }
+
+        var result = false;
+        if (targetTable === 'task') {
+            result = true;
+        } else {
+            try {
+                var tu = new TableUtils(targetTable);
+                var parents = tu.getTables() || [];
+                result = parents.indexOf('task') !== -1;
+            } catch (err) {
+                this._log('warn', ctx, 'TableUtils failed for "' + targetTable + '": ' + err);
+                result = false;
+            }
+        }
+
+        this._taskExtensionCache[targetTable] = result;
+        this._log('debug', ctx, 'Resolved "' + targetTable + '" → ' + result + ' (cached)');
+        return result;
+    },
+
+    /**
+     * Build a field descriptor for a single field on the record.
+     * Returns null if the field doesn't exist on the record's table.
+     */
+    _describeField: function (rec, fieldDef) {
+        var ctx = '_describeField';
+
+        try {
+            if (!fieldDef || !fieldDef.field_name) {
+                this._log('warn', ctx, 'Invalid fieldDef: ' + JSON.stringify(fieldDef));
+                return null;
+            }
+
+            var element = rec.getElement(fieldDef.field_name);
+            if (!element) {
+                this._log('warn', ctx, 'Field "' + fieldDef.field_name +
+                    '" does not exist on table "' + rec.getTableName() + '" — skipping');
+                return null;
+            }
+
+            var ed = element.getED();
+            var type = ed.getInternalType() + '';
+            var label = fieldDef.label_override || (ed.getLabel() + '');
+            var value = rec.getValue(fieldDef.field_name);
+            var displayValue = rec.getDisplayValue(fieldDef.field_name);
+
+            var desc = {
+                name: fieldDef.field_name,
+                label: label,
+                type: type,
+                value: value,
+                display_value: displayValue,
+                render_as: this._deriveRenderAs(type)
+            };
+
+            // Reference fields — only link if the target extends task.
+            if (type === 'reference') {
+                var refTable = ed.getReference() + '';
+                if (this._targetExtendsTask(refTable)) {
+                    desc.ref_sys_id = value;
+                    desc.ref_table = refTable;
+                    this._log('debug', ctx, 'Reference field "' + fieldDef.field_name +
+                        '" → task-based table "' + refTable + '" — linking');
+                } else {
+                    desc.render_as = 'text';
+                    this._log('debug', ctx, 'Reference field "' + fieldDef.field_name +
+                        '" → non-task table "' + refTable + '" — rendering as text');
+                }
+            }
+
+            return desc;
+
+        } catch (err) {
+            this._log('error', ctx, 'Exception describing field "' +
+                (fieldDef ? fieldDef.field_name : 'unknown') + '": ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return null;
+        }
+    },
+
+    /**
+     * Pure mapping from dictionary internal type → render mode.
+     */
+    _deriveRenderAs: function (type) {
+        switch (type) {
+            case 'glide_date_time':
+            case 'glide_date':
+            case 'due_date':
+                return 'date';
+            case 'reference':
+                return 'link';
+            case 'boolean':
+            case 'choice':
+                return 'badge';
+            case 'html':
+            case 'translated_html':
+            case 'journal':
+            case 'journal_input':
+                return 'html';
+            case 'currency':
+            case 'price':
+                return 'text';
+            case 'url':
+                return 'external_link';
+            default:
+                return 'text';
+        }
+    },
+
+    /**
+     * Fallback when no config exists — introspects the dictionary to pick fields per section.
+     */
+    _getDefaultFields: function (rec, section) {
+        var ctx = '_getDefaultFields[' + section + ']';
+
+        try {
+            if (section === 'header') {
+                var candidates = [
+                    this._pickFirstExistingField(rec, ['number', 'name']),
+                    this._pickFirstExistingField(rec, ['opened_by', 'caller_id', 'requested_for', 'requested_by']),
+                    'state',
+                    'priority',
+                    'sys_updated_on',
+                    'sys_created_on'
+                ];
+                var picked = candidates
+                    .filter(function (f) { return f && rec.getElement(f); })
+                    .slice(0, 6)
+                    .map(function (name) { return { field_name: name }; });
+
+                this._log('debug', ctx, 'Picked ' + picked.length + ' header fields: ' +
+                    JSON.stringify(picked));
+                return picked;
+            }
+
+            if (section === 'primary') {
+                var primary = ['short_description', 'description']
+                    .filter(function (f) { return rec.getElement(f); })
+                    .map(function (name) { return { field_name: name }; });
+
+                this._log('debug', ctx, 'Picked ' + primary.length + ' primary fields: ' +
+                    JSON.stringify(primary));
+                return primary;
+            }
+
+            if (section === 'details') {
+                var excluded = {
+                    number: 1, name: 1, opened_by: 1, caller_id: 1, requested_for: 1, requested_by: 1,
+                    state: 1, priority: 1, sys_updated_on: 1, sys_created_on: 1,
+                    short_description: 1, description: 1
+                };
+                var skipTypes = {
+                    'collection': 1, 'password2': 1, 'password': 1,
+                    'script': 1, 'script_plain': 1, 'xml': 1
+                };
+
+                var fields = [];
+                var elements = rec.getElements();
+                for (var i = 0; i < elements.size(); i++) {
+                    var el = elements.get(i);
+                    var name = el.getName() + '';
+                    if (excluded[name]) continue;
+                    if (name.indexOf('sys_') === 0 && name !== 'sys_id') continue;
+
+                    var ed = el.getED();
+                    var type = ed.getInternalType() + '';
+                    if (skipTypes[type]) continue;
+
+                    var value = rec.getValue(name);
+                    if (value === null || value === '' || value === undefined) continue;
+
+                    fields.push({ field_name: name, _label: ed.getLabel() + '' });
+                }
+
+                fields.sort(function (a, b) { return a._label.localeCompare(b._label); });
+                var trimmed = fields.slice(0, 20).map(function (f) {
+                    return { field_name: f.field_name };
+                });
+
+                this._log('debug', ctx, 'Picked ' + trimmed.length + ' details fields (from ' +
+                    fields.length + ' candidates): ' + JSON.stringify(trimmed));
+                return trimmed;
+            }
+
+            this._log('warn', ctx, 'Unknown section — returning empty');
+            return [];
+
+        } catch (err) {
+            this._log('error', ctx, 'Exception: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return [];
+        }
+    },
+
+    _pickFirstExistingField: function (rec, candidates) {
+        for (var i = 0; i < candidates.length; i++) {
+            if (rec.getElement(candidates[i])) return candidates[i];
+        }
+        return null;
+    },
+
+    // ── Logging helper ──────────────────────────────────────────────────────
+
+    /**
+     * Centralized logger. Routes to gs.info/warn/error based on level.
+     * All messages are prefixed with LOG_PREFIX and the calling context for grep-ability.
+     *
+     * Usage: this._log('info', 'methodName', 'message');
+     */
+    _log: function (level, ctx, message) {
+        var levelOrder = { debug: 0, info: 1, warn: 2, error: 3 };
+        var configured = levelOrder[this.LOG_LEVEL] || 0;
+        var msgLevel = levelOrder[level] || 0;
+
+        if (msgLevel < configured) return;
+
+        var fullMsg = '[' + this.LOG_PREFIX + '][' + level.toUpperCase() + '][' + ctx + '] ' + message;
+
+        if (level === 'error') {
+            gs.error(fullMsg);
+        } else if (level === 'warn') {
+            gs.warn(fullMsg);
+        } else {
+            // gs.info handles both 'info' and 'debug'
+            gs.info(fullMsg);
+        }
+    },
+
+    type: 'DLACDynamicRecordViewUtility'
+};
+
+```
+
 ```javascript
 (function() {
   // 1. Resolve table + sys_id
