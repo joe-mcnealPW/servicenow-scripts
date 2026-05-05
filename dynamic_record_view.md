@@ -168,431 +168,764 @@ The widget should accept everything via options *or* URL params, with URL params
 var GENDynamicRecordViewUtility = Class.create();
 GENDynamicRecordViewUtility.prototype = {
 
-  // ── Logging configuration ───────────────────────────────────────────────
-  LOG_PREFIX: 'GENDynamicRecordView',
-  LOG_LEVEL: 'debug',  // 'debug' | 'info' | 'warn' | 'error' — controls verbosity
+    // ── Logging configuration ───────────────────────────────────────────────
+    LOG_PREFIX: 'GENDynamicRecordView',
+    LOG_LEVEL: 'debug',  // 'debug' | 'info' | 'warn' | 'error' — controls verbosity
 
-  initialize: function () {
-      this._taskExtensionCache = {};
-      this._log('info', 'initialize', 'Utility instance created');
-  },
+    initialize: function () {
+        this._taskExtensionCache = {};
+        this._log('info', 'initialize', 'Utility instance created');
+    },
 
-  // ── Public methods ──────────────────────────────────────────────────────
+    // ── Public methods ──────────────────────────────────────────────────────
 
-  /**
-   * Load the record view config for a given table.
-   * Returns null if no active config exists, or if an error occurs.
-   */
-  loadConfig: function (table) {
-      var ctx = 'loadConfig';
-      this._log('info', ctx, 'Called with table=' + table);
+    /**
+     * Load the record view config for a given table.
+     * Returns null if no active config exists, or if an error occurs.
+     */
+    loadConfig: function (table) {
+        var ctx = 'loadConfig';
+        this._log('info', ctx, 'Called with table=' + table);
 
-      if (!table) {
-          this._log('warn', ctx, 'No table provided — returning null');
-          return null;
-      }
+        if (!table) {
+            this._log('warn', ctx, 'No table provided — returning null');
+            return null;
+        }
 
-      try {
-          var gr = new GlideRecord('x_g_dla_dla_connec_record_view_config');
-          gr.addQuery('table', table);
-          gr.addQuery('active', true);
-          gr.setLimit(1);
-          gr.query();
+        try {
+            var gr = new GlideRecord('x_g_dla_dla_connec_record_view_config');
+            gr.addQuery('table', table);
+            gr.addQuery('active', true);
+            gr.setLimit(1);
+            gr.query();
 
-          this._log('debug', ctx, 'Query encoded: ' + gr.getEncodedQuery());
+            this._log('debug', ctx, 'Query encoded: ' + gr.getEncodedQuery());
 
-          if (!gr.next()) {
-              this._log('info', ctx, 'No active config found for table=' + table);
-              return null;
-          }
-
-          var cfg = {
-              sys_id: gr.getUniqueValue(),
-              title_field: gr.getValue('title_field'),
-              fields: { header: [], primary: [], details: [] }
-          };
-
-          this._log('debug', ctx, 'Config record loaded: sys_id=' + cfg.sys_id +
-              ', title_field=' + cfg.title_field);
-
-          // Load child field rows
-          var fg = new GlideRecord('x_g_dla_dla_connec_record_view_field');
-          fg.addQuery('config', cfg.sys_id);
-          fg.orderBy('section');
-          fg.orderBy('order');
-          fg.query();
-
-          var fieldCount = 0;
-          while (fg.next()) {
-            var section = fg.getValue('section') + '';
-            var fieldName = fg.getValue('field_name') + '';
-            var labelOverride = (fg.getValue('label_override') || '') + '';
-          
-            var fieldEntry = {
-                field_name: fieldName,
-                label_override: labelOverride
-            };
-          
-            if (section === 'header') {
-                cfg.fields.header.push(fieldEntry);
-                fieldCount++;
-            } else if (section === 'primary') {
-                cfg.fields.primary.push(fieldEntry);
-                fieldCount++;
-            } else if (section === 'details') {
-                cfg.fields.details.push(fieldEntry);
-                fieldCount++;
-            } else {
-                this._log('warn', ctx, 'Unknown section value: "' + section +
-                    '" (length=' + section.length + ') for field=' + fieldName);
+            if (!gr.next()) {
+                this._log('info', ctx, 'No active config found for table=' + table);
+                return null;
             }
-          }
-          this._log('info', ctx, 'Config loaded successfully. Total fields=' + fieldCount +
-              ' (header=' + cfg.fields.header.length +
-              ', primary=' + cfg.fields.primary.length +
-              ', details=' + cfg.fields.details.length + ')');
-          this._log('debug', ctx, 'Full config: ' + JSON.stringify(cfg));
 
-          return cfg;
+            var cfg = {
+                sys_id: gr.getUniqueValue(),
+                title_field: gr.getValue('title_field'),
+                fields: { header: [], primary: [], details: [] }
+            };
 
-      } catch (err) {
-          this._log('error', ctx, 'Exception while loading config: ' + err +
-              ' | stack: ' + (err.stack || 'no stack'));
-          return null;
-      }
-  },
+            this._log('debug', ctx, 'Config record loaded: sys_id=' + cfg.sys_id +
+                ', title_field=' + cfg.title_field);
 
-  /**
-   * Build the array of field descriptors for a given section.
-   * Falls back to default field selection when no config is provided.
-   */
-  buildSection: function (rec, config, section) {
-      var ctx = 'buildSection[' + section + ']';
-      var self = this;
+            // Load child field rows
+            var fg = new GlideRecord('x_g_dla_dla_connec_record_view_field');
+            fg.addQuery('config', cfg.sys_id);
+            fg.orderBy('section');
+            fg.orderBy('order');
+            fg.query();
 
-      try {
-          this._log('debug', ctx, 'Called. config provided=' + !!config +
-              ', table=' + (rec ? rec.getTableName() : 'null'));
+            var fieldCount = 0;
+            while (fg.next()) {
+                var section = fg.getValue('section') + '';
+                var fieldName = fg.getValue('field_name') + '';
+                var labelOverride = (fg.getValue('label_override') || '') + '';
 
-          if (!rec) {
-              this._log('error', ctx, 'No record provided — returning empty array');
-              return [];
-          }
+                var fieldEntry = {
+                    field_name: fieldName,
+                    label_override: labelOverride
+                };
 
-          var fields;
-          var usingConfig = !!(config && config.fields && config.fields[section] &&
-              config.fields[section].length > 0);
+                if (section === 'header') {
+                    cfg.fields.header.push(fieldEntry);
+                    fieldCount++;
+                } else if (section === 'primary') {
+                    cfg.fields.primary.push(fieldEntry);
+                    fieldCount++;
+                } else if (section === 'details') {
+                    cfg.fields.details.push(fieldEntry);
+                    fieldCount++;
+                } else {
+                    this._log('warn', ctx, 'Unknown section value: "' + section +
+                        '" (length=' + section.length + ') for field=' + fieldName);
+                }
+            }
+            this._log('info', ctx, 'Config loaded successfully. Total fields=' + fieldCount +
+                ' (header=' + cfg.fields.header.length +
+                ', primary=' + cfg.fields.primary.length +
+                ', details=' + cfg.fields.details.length + ')');
+            this._log('debug', ctx, 'Full config: ' + JSON.stringify(cfg));
 
-          if (usingConfig) {
-              fields = config.fields[section];
-              this._log('info', ctx, 'Using configured fields. count=' + fields.length);
-          } else {
-              fields = this._getDefaultFields(rec, section);
-              this._log('info', ctx, 'Using default fields (no config). count=' + fields.length);
-          }
+            return cfg;
 
-          this._log('debug', ctx, 'Field list: ' + JSON.stringify(fields));
+        } catch (err) {
+            this._log('error', ctx, 'Exception while loading config: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return null;
+        }
+    },
 
-          var descriptors = fields.map(function (f) {
-              return self._describeField(rec, f);
-          }).filter(function (d) {
-              return d !== null;
-          });
+    /**
+     * Build the array of field descriptors for a given section.
+     * Falls back to default field selection when no config is provided.
+     */
+    buildSection: function (rec, config, section) {
+        var ctx = 'buildSection[' + section + ']';
+        var self = this;
 
-          this._log('info', ctx, 'Built ' + descriptors.length + ' descriptor(s) (filtered from ' +
-              fields.length + ' raw)');
+        try {
+            this._log('debug', ctx, 'Called. config provided=' + !!config +
+                ', table=' + (rec ? rec.getTableName() : 'null'));
 
-          return descriptors;
+            if (!rec) {
+                this._log('error', ctx, 'No record provided — returning empty array');
+                return [];
+            }
 
-      } catch (err) {
-          this._log('error', ctx, 'Exception: ' + err +
-              ' | stack: ' + (err.stack || 'no stack'));
-          return [];
-      }
-  },
+            var fields;
+            var usingConfig = !!(config && config.fields && config.fields[section] &&
+                config.fields[section].length > 0);
 
-  /**
-   * Resolve the title for the record. Uses config.title_field if set,
-   * otherwise falls back to short_description → number → record display value.
-   */
-  buildTitle: function (rec, config) {
-      var ctx = 'buildTitle';
+            if (usingConfig) {
+                fields = config.fields[section];
+                this._log('info', ctx, 'Using configured fields. count=' + fields.length);
+            } else {
+                fields = this._getDefaultFields(rec, section);
+                this._log('info', ctx, 'Using default fields (no config). count=' + fields.length);
+            }
 
-      try {
-          if (!rec) {
-              this._log('warn', ctx, 'No record provided');
-              return 'Record';
-          }
+            this._log('debug', ctx, 'Field list: ' + JSON.stringify(fields));
 
-          if (config && config.title_field) {
-              var configured = rec.getDisplayValue(config.title_field);
-              this._log('info', ctx, 'Using configured title_field="' + config.title_field +
-                  '" → "' + configured + '"');
-              if (configured) return configured;
-              this._log('warn', ctx, 'Configured title_field returned empty — falling back');
-          }
+            var descriptors = fields.map(function (f) {
+                return self._describeField(rec, f);
+            }).filter(function (d) {
+                return d !== null;
+            });
 
-          var fallback = rec.getDisplayValue('short_description') ||
-              rec.getDisplayValue('number') ||
-              rec.getDisplayValue() ||
-              'Record';
+            this._log('info', ctx, 'Built ' + descriptors.length + ' descriptor(s) (filtered from ' +
+                fields.length + ' raw)');
 
-          this._log('info', ctx, 'Using fallback title → "' + fallback + '"');
-          return fallback;
+            return descriptors;
 
-      } catch (err) {
-          this._log('error', ctx, 'Exception: ' + err +
-              ' | stack: ' + (err.stack || 'no stack'));
-          return 'Record';
-      }
-  },
+        } catch (err) {
+            this._log('error', ctx, 'Exception: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return [];
+        }
+    },
 
-  // ── Private helpers ─────────────────────────────────────────────────────
+    /**
+     * Resolve the title for the record. Uses config.title_field if set,
+     * otherwise falls back to short_description → number → record display value.
+     */
+    buildTitle: function (rec, config) {
+        var ctx = 'buildTitle';
 
-  /**
-   * Cache-aware check for whether a target table extends task.
-   * Cache lives on the instance — survives across calls within a single execution.
-   */
-  _targetExtendsTask: function (targetTable) {
-      var ctx = '_targetExtendsTask';
-      if (!targetTable) return false;
+        try {
+            if (!rec) {
+                this._log('warn', ctx, 'No record provided');
+                return 'Record';
+            }
 
-      if (this._taskExtensionCache.hasOwnProperty(targetTable)) {
-          this._log('debug', ctx, 'Cache hit for "' + targetTable + '" → ' +
-              this._taskExtensionCache[targetTable]);
-          return this._taskExtensionCache[targetTable];
-      }
+            if (config && config.title_field) {
+                var configured = rec.getDisplayValue(config.title_field);
+                this._log('info', ctx, 'Using configured title_field="' + config.title_field +
+                    '" → "' + configured + '"');
+                if (configured) return configured;
+                this._log('warn', ctx, 'Configured title_field returned empty — falling back');
+            }
 
-      var result = false;
-      if (targetTable === 'task') {
-          result = true;
-      } else {
-          try {
-              var tu = new TableUtils(targetTable);
-              var parents = tu.getTables() || [];
-              result = parents.indexOf('task') !== -1;
-          } catch (err) {
-              this._log('warn', ctx, 'TableUtils failed for "' + targetTable + '": ' + err);
-              result = false;
-          }
-      }
+            var fallback = rec.getDisplayValue('short_description') ||
+                rec.getDisplayValue('number') ||
+                rec.getDisplayValue() ||
+                'Record';
 
-      this._taskExtensionCache[targetTable] = result;
-      this._log('debug', ctx, 'Resolved "' + targetTable + '" → ' + result + ' (cached)');
-      return result;
-  },
+            this._log('info', ctx, 'Using fallback title → "' + fallback + '"');
+            return fallback;
 
-  /**
-   * Build a field descriptor for a single field on the record.
-   * Returns null if the field doesn't exist on the record's table.
-   */
-  _describeField: function (rec, fieldDef) {
-      var ctx = '_describeField';
+        } catch (err) {
+            this._log('error', ctx, 'Exception: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return 'Record';
+        }
+    },
 
-      try {
-          if (!fieldDef || !fieldDef.field_name) {
-              this._log('warn', ctx, 'Invalid fieldDef: ' + JSON.stringify(fieldDef));
-              return null;
-          }
+    /**
+     * Build variable descriptors for an sc_req_item record.
+     * Returns an empty array for any other table.
+     *
+     * Strategy:
+     *  1. Query item_option_new for all active variables on this RITM's catalog item
+     *     AND from any variable sets attached to that catalog item.
+     *  2. For each variable definition, read the value off rec.variables[<name>] —
+     *     this handles the joins through sc_item_option_mtom / sc_item_option for us.
+     *  3. Skip layout-only types (container_start, container_end, container_split,
+     *     label, break, macro, etc.) since they hold no data.
+     *  4. Skip HTML variables for v1 to avoid having to sanitize rich text in the
+     *     widget — can be added later via the existing 'html' render mode.
+     */
+    buildVariables: function (rec) {
+        var ctx = 'buildVariables';
 
-          var element = rec.getElement(fieldDef.field_name);
-          if (!element) {
-              this._log('warn', ctx, 'Field "' + fieldDef.field_name +
-                  '" does not exist on table "' + rec.getTableName() + '" — skipping');
-              return null;
-          }
+        try {
+            if (!rec) {
+                this._log('warn', ctx, 'No record provided');
+                return [];
+            }
 
-          var ed = element.getED();
-          var type = ed.getInternalType() + '';
-          var label = fieldDef.label_override || (ed.getLabel() + '');
-          var value = rec.getValue(fieldDef.field_name);
-          var displayValue = rec.getDisplayValue(fieldDef.field_name);
+            var tableName = rec.getTableName() + '';
+            if (tableName !== 'sc_req_item') {
+                this._log('debug', ctx, 'Not an sc_req_item (table=' + tableName + ') — skipping');
+                return [];
+            }
 
-          var desc = {
-              name: fieldDef.field_name,
-              label: label,
-              type: type,
-              value: value,
-              display_value: displayValue,
-              render_as: this._deriveRenderAs(type)
-          };
+            var catItemId = rec.getValue('cat_item');
+            if (!catItemId) {
+                this._log('warn', ctx, 'RITM has no cat_item — cannot resolve variables');
+                return [];
+            }
 
-          // Reference fields — only link if the target extends task.
-          if (type === 'reference') {
-              var refTable = ed.getReference() + '';
-              if (this._targetExtendsTask(refTable)) {
-                  desc.ref_sys_id = value;
-                  desc.ref_table = refTable;
-                  this._log('debug', ctx, 'Reference field "' + fieldDef.field_name +
-                      '" → task-based table "' + refTable + '" — linking');
-              } else {
-                  desc.render_as = 'text';
-                  this._log('debug', ctx, 'Reference field "' + fieldDef.field_name +
-                      '" → non-task table "' + refTable + '" — rendering as text');
-              }
-          }
+            this._log('info', ctx, 'Building variables for RITM cat_item=' + catItemId);
 
-          return desc;
+            // Collect variable set sys_ids attached to this catalog item.
+            var variableSetIds = this._getVariableSetIdsForCatItem(catItemId);
+            this._log('debug', ctx, 'Found ' + variableSetIds.length +
+                ' variable set(s) for cat_item');
 
-      } catch (err) {
-          this._log('error', ctx, 'Exception describing field "' +
-              (fieldDef ? fieldDef.field_name : 'unknown') + '": ' + err +
-              ' | stack: ' + (err.stack || 'no stack'));
-          return null;
-      }
-  },
+            // Query variable definitions: those on the catalog item directly OR on any of its sets.
+            // Encoded query: cat_item=X^ORvariable_setINid1,id2,...
+            var defs = new GlideRecord('item_option_new');
+            defs.addQuery('active', true);
 
-  /**
-   * Pure mapping from dictionary internal type → render mode.
-   */
-  _deriveRenderAs: function (type) {
-      switch (type) {
-          case 'glide_date_time':
-          case 'glide_date':
-          case 'due_date':
-              return 'date';
-          case 'reference':
-              return 'link';
-          case 'boolean':
-          case 'choice':
-              return 'badge';
-          case 'html':
-          case 'translated_html':
-          case 'journal':
-          case 'journal_input':
-              return 'html';
-          case 'currency':
-          case 'price':
-              return 'text';
-          case 'url':
-              return 'external_link';
-          default:
-              return 'text';
-      }
-  },
+            var ownership = defs.addQuery('cat_item', catItemId);
+            if (variableSetIds.length > 0) {
+                ownership.addOrCondition('variable_set', 'IN', variableSetIds.join(','));
+            }
+            defs.orderBy('order');
+            defs.query();
 
-  /**
-   * Fallback when no config exists — introspects the dictionary to pick fields per section.
-   */
-  _getDefaultFields: function (rec, section) {
-      var ctx = '_getDefaultFields[' + section + ']';
+            var descriptors = [];
+            var skippedLayout = 0;
+            var skippedHtml = 0;
 
-      try {
-          if (section === 'header') {
-              var candidates = [
-                  this._pickFirstExistingField(rec, ['number', 'name']),
-                  this._pickFirstExistingField(rec, ['opened_by', 'caller_id', 'requested_for', 'requested_by']),
-                  'state',
-                  'priority',
-                  'sys_updated_on',
-                  'sys_created_on'
-              ];
-              var picked = candidates
-                  .filter(function (f) { return f && rec.getElement(f); })
-                  .slice(0, 6)
-                  .map(function (name) { return { field_name: name }; });
+            while (defs.next()) {
+                var varName = defs.getValue('name') + '';
+                var typeCode = defs.getValue('type') + '';
+                var label = (defs.getValue('question_text') || varName) + '';
 
-              this._log('debug', ctx, 'Picked ' + picked.length + ' header fields: ' +
-                  JSON.stringify(picked));
-              return picked;
-          }
+                // Skip layout-only and HTML types per v1 scope.
+                if (this._isLayoutVariableType(typeCode)) {
+                    skippedLayout++;
+                    continue;
+                }
+                if (this._isHtmlVariableType(typeCode)) {
+                    skippedHtml++;
+                    continue;
+                }
 
-          if (section === 'primary') {
-              var primary = ['short_description', 'description']
-                  .filter(function (f) { return rec.getElement(f); })
-                  .map(function (name) { return { field_name: name }; });
+                var desc = this._describeVariable(rec, varName, typeCode, label);
+                if (desc) {
+                    descriptors.push(desc);
+                }
+            }
 
-              this._log('debug', ctx, 'Picked ' + primary.length + ' primary fields: ' +
-                  JSON.stringify(primary));
-              return primary;
-          }
+            this._log('info', ctx, 'Built ' + descriptors.length + ' variable descriptor(s). ' +
+                'Skipped ' + skippedLayout + ' layout, ' + skippedHtml + ' html');
 
-          if (section === 'details') {
-              var excluded = {
-                  number: 1, name: 1, opened_by: 1, caller_id: 1, requested_for: 1, requested_by: 1,
-                  state: 1, priority: 1, sys_updated_on: 1, sys_created_on: 1,
-                  short_description: 1, description: 1
-              };
-              var skipTypes = {
-                  'collection': 1, 'password2': 1, 'password': 1,
-                  'script': 1, 'script_plain': 1, 'xml': 1
-              };
+            return descriptors;
 
-              var fields = [];
-              var elements = rec.getElements();
-              for (var i = 0; i < elements.size(); i++) {
-                  var el = elements.get(i);
-                  var name = el.getName() + '';
-                  if (excluded[name]) continue;
-                  if (name.indexOf('sys_') === 0 && name !== 'sys_id') continue;
+        } catch (err) {
+            this._log('error', ctx, 'Exception: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return [];
+        }
+    },
 
-                  var ed = el.getED();
-                  var type = ed.getInternalType() + '';
-                  if (skipTypes[type]) continue;
+    // ── Private helpers ─────────────────────────────────────────────────────
 
-                  var value = rec.getValue(name);
-                  if (value === null || value === '' || value === undefined) continue;
+    /**
+     * Returns the array of variable set sys_ids associated with a given catalog item,
+     * via the io_set_item join table.
+     */
+    _getVariableSetIdsForCatItem: function (catItemId) {
+        var ctx = '_getVariableSetIdsForCatItem';
+        var ids = [];
 
-                  fields.push({ field_name: name, _label: ed.getLabel() + '' });
-              }
+        try {
+            var ios = new GlideRecord('io_set_item');
+            ios.addQuery('sc_cat_item', catItemId);
+            ios.query();
+            while (ios.next()) {
+                var setId = ios.getValue('variable_set');
+                if (setId) ids.push(setId + '');
+            }
+        } catch (err) {
+            this._log('error', ctx, 'Exception: ' + err);
+        }
 
-              fields.sort(function (a, b) { return a._label.localeCompare(b._label); });
-              var trimmed = fields.slice(0, 20).map(function (f) {
-                  return { field_name: f.field_name };
-              });
+        return ids;
+    },
 
-              this._log('debug', ctx, 'Picked ' + trimmed.length + ' details fields (from ' +
-                  fields.length + ' candidates): ' + JSON.stringify(trimmed));
-              return trimmed;
-          }
+    /**
+     * Build a descriptor for a single RITM variable.
+     * Shape matches _describeField output so the widget template can render both with
+     * the same ng-switch block.
+     */
+    _describeVariable: function (rec, varName, typeCode, label) {
+        var ctx = '_describeVariable';
 
-          this._log('warn', ctx, 'Unknown section — returning empty');
-          return [];
+        try {
+            // The .variables.<name> accessor walks sc_item_option_mtom → sc_item_option for us.
+            var variableValue = rec.variables[varName];
+            var rawValue = '';
+            var displayValue = '';
 
-      } catch (err) {
-          this._log('error', ctx, 'Exception: ' + err +
-              ' | stack: ' + (err.stack || 'no stack'));
-          return [];
-      }
-  },
+            if (variableValue !== undefined && variableValue !== null) {
+                // toString() gives the raw stored value (sys_id for references, raw for others).
+                rawValue = variableValue.toString();
 
-  _pickFirstExistingField: function (rec, candidates) {
-      for (var i = 0; i < candidates.length; i++) {
-          if (rec.getElement(candidates[i])) return candidates[i];
-      }
-      return null;
-  },
+                // getDisplayValue() resolves references and choice labels. Falls back to raw.
+                if (typeof variableValue.getDisplayValue === 'function') {
+                    displayValue = variableValue.getDisplayValue() + '';
+                } else {
+                    displayValue = rawValue;
+                }
+            }
 
-  // ── Logging helper ──────────────────────────────────────────────────────
+            var desc = {
+                name: 'variable_' + varName,   // namespaced to avoid collision with field names
+                label: label,
+                type: 'variable_' + typeCode,
+                value: rawValue,
+                display_value: displayValue,
+                render_as: this._deriveVariableRenderAs(typeCode),
+                is_variable: true              // flag for template/CSS if useful later
+            };
 
-  /**
-   * Centralized logger. Routes to gs.info/warn/error based on level.
-   * All messages are prefixed with LOG_PREFIX and the calling context for grep-ability.
-   *
-   * Usage: this._log('info', 'methodName', 'message');
-   */
-  _log: function (level, ctx, message) {
-      var levelOrder = { debug: 0, info: 1, warn: 2, error: 3 };
-      var configured = levelOrder[this.LOG_LEVEL] || 0;
-      var msgLevel = levelOrder[level] || 0;
+            // For reference-type variables, expose ref info if the target extends task.
+            // Type code 8 = reference variable.
+            if (typeCode === '8' && rawValue) {
+                var refTable = this._getReferenceVariableTargetTable(rec, varName);
+                if (refTable && this._targetExtendsTask(refTable)) {
+                    desc.ref_sys_id = rawValue;
+                    desc.ref_table = refTable;
+                } else {
+                    desc.render_as = 'text';
+                }
+            }
 
-      if (msgLevel < configured) return;
+            return desc;
 
-      var fullMsg = '[' + this.LOG_PREFIX + '][' + level.toUpperCase() + '][' + ctx + '] ' + message;
+        } catch (err) {
+            this._log('error', ctx, 'Exception describing variable "' + varName + '": ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return null;
+        }
+    },
 
-      if (level === 'error') {
-          gs.error(fullMsg);
-      } else if (level === 'warn') {
-          gs.warn(fullMsg);
-      } else {
-          // gs.info handles both 'info' and 'debug'
-          gs.info(fullMsg);
-      }
-  },
+    /**
+     * For reference variables, look up which table they reference.
+     * The reference table is stored on the item_option_new definition.
+     */
+    _getReferenceVariableTargetTable: function (rec, varName) {
+        try {
+            var def = new GlideRecord('item_option_new');
+            def.addQuery('cat_item', rec.getValue('cat_item'));
+            def.addQuery('name', varName);
+            def.setLimit(1);
+            def.query();
+            if (def.next()) {
+                return def.getValue('reference') + '';
+            }
 
-  type: 'DLACDynamicRecordViewUtility'
+            // Fallback — variable might be on a variable set
+            var defSet = new GlideRecord('item_option_new');
+            defSet.addQuery('name', varName);
+            defSet.addNotNullQuery('variable_set');
+            defSet.setLimit(1);
+            defSet.query();
+            if (defSet.next()) {
+                return defSet.getValue('reference') + '';
+            }
+        } catch (err) {
+            // Non-fatal; just return null and let caller render as text
+        }
+        return null;
+    },
+
+    /**
+     * Variable type code → render mode.
+     * Type codes are integers stored as strings on item_option_new.type.
+     *
+     * Common codes:
+     *   1 = Yes/No                  → badge
+     *   2 = Multi Line Text         → text (preserve line breaks via primary-style CSS)
+     *   3 = Multiple Choice         → badge
+     *   4 = Numeric Scale           → text
+     *   5 = Select Box              → badge
+     *   6 = Single Line Text        → text
+     *   7 = Checkbox                → badge
+     *   8 = Reference               → link (handled in _describeVariable)
+     *   9 = Date                    → date
+     *  10 = Date/Time               → date
+     *  16 = HTML                    → (skipped in v1)
+     *  17 = Breakpoint (layout)     → (skipped in v1)
+     *  18 = Macro (layout)          → (skipped in v1)
+     *  19 = UI Page (layout)        → (skipped in v1)
+     *  20 = Wide Single Line Text   → text
+     *  21 = Container Start         → (skipped in v1)
+     *  22 = Container End           → (skipped in v1)
+     *  23 = List Collector          → text
+     *  24 = Lookup Select Box       → badge
+     *  25 = Lookup Multiple Choice  → badge
+     *  26 = HTML (alt)              → (skipped in v1)
+     *  31 = Container Split         → (skipped in v1)
+     *  32 = Masked                  → text
+     */
+    _deriveVariableRenderAs: function (typeCode) {
+        switch (typeCode + '') {
+            case '9':
+            case '10':
+                return 'date';
+            case '8':
+                return 'link';   // overridden to 'text' in _describeVariable if non-task
+            case '1':
+            case '3':
+            case '5':
+            case '7':
+            case '24':
+            case '25':
+                return 'badge';
+            default:
+                return 'text';
+        }
+    },
+
+    /**
+     * True if the variable type is layout-only (container, label, break, macro, etc.) —
+     * these hold no user data and should be skipped.
+     */
+    _isLayoutVariableType: function (typeCode) {
+        var layoutTypes = { '11': 1, '17': 1, '18': 1, '19': 1, '21': 1, '22': 1, '31': 1 };
+        return !!layoutTypes[typeCode + ''];
+    },
+
+    /**
+     * True if the variable type is HTML/rich text — skipped in v1.
+     */
+    _isHtmlVariableType: function (typeCode) {
+        var htmlTypes = { '16': 1, '26': 1 };
+        return !!htmlTypes[typeCode + ''];
+    },
+
+    /**
+     * Cache-aware check for whether a target table extends task.
+     * Cache lives on the instance — survives across calls within a single execution.
+     */
+    _targetExtendsTask: function (targetTable) {
+        var ctx = '_targetExtendsTask';
+        if (!targetTable) return false;
+
+        if (this._taskExtensionCache.hasOwnProperty(targetTable)) {
+            this._log('debug', ctx, 'Cache hit for "' + targetTable + '" → ' +
+                this._taskExtensionCache[targetTable]);
+            return this._taskExtensionCache[targetTable];
+        }
+
+        var result = false;
+        if (targetTable === 'task') {
+            result = true;
+        } else {
+            try {
+                var tu = new TableUtils(targetTable);
+                var parents = tu.getTables() || [];
+                result = parents.indexOf('task') !== -1;
+            } catch (err) {
+                this._log('warn', ctx, 'TableUtils failed for "' + targetTable + '": ' + err);
+                result = false;
+            }
+        }
+
+        this._taskExtensionCache[targetTable] = result;
+        this._log('debug', ctx, 'Resolved "' + targetTable + '" → ' + result + ' (cached)');
+        return result;
+    },
+
+    /**
+     * Build a field descriptor for a single field on the record.
+     * Returns null if the field doesn't exist on the record's table.
+     */
+    _describeField: function (rec, fieldDef) {
+        var ctx = '_describeField';
+
+        try {
+            if (!fieldDef || !fieldDef.field_name) {
+                this._log('warn', ctx, 'Invalid fieldDef: ' + JSON.stringify(fieldDef));
+                return null;
+            }
+
+            var element = rec.getElement(fieldDef.field_name);
+            if (!element) {
+                this._log('warn', ctx, 'Field "' + fieldDef.field_name +
+                    '" does not exist on table "' + rec.getTableName() + '" — skipping');
+                return null;
+            }
+
+            var ed = element.getED();
+            var type = ed.getInternalType() + '';
+            var label = fieldDef.label_override || (ed.getLabel() + '');
+            var value = rec.getValue(fieldDef.field_name);
+            var displayValue = rec.getDisplayValue(fieldDef.field_name);
+
+            var desc = {
+                name: fieldDef.field_name,
+                label: label,
+                type: type,
+                value: value,
+                display_value: displayValue,
+                render_as: this._deriveRenderAs(type)
+            };
+
+            // Reference fields — only link if the target extends task.
+            if (type === 'reference') {
+                var refTable = ed.getReference() + '';
+                if (this._targetExtendsTask(refTable)) {
+                    desc.ref_sys_id = value;
+                    desc.ref_table = refTable;
+                    this._log('debug', ctx, 'Reference field "' + fieldDef.field_name +
+                        '" → task-based table "' + refTable + '" — linking');
+                } else {
+                    desc.render_as = 'text';
+                    this._log('debug', ctx, 'Reference field "' + fieldDef.field_name +
+                        '" → non-task table "' + refTable + '" — rendering as text');
+                }
+            }
+
+            return desc;
+
+        } catch (err) {
+            this._log('error', ctx, 'Exception describing field "' +
+                (fieldDef ? fieldDef.field_name : 'unknown') + '": ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return null;
+        }
+    },
+
+    /**
+     * Pure mapping from dictionary internal type → render mode.
+     */
+    _deriveRenderAs: function (type) {
+        switch (type) {
+            case 'glide_date_time':
+            case 'glide_date':
+            case 'due_date':
+                return 'date';
+            case 'reference':
+                return 'link';
+            case 'boolean':
+            case 'choice':
+                return 'badge';
+            case 'html':
+            case 'translated_html':
+            case 'journal':
+            case 'journal_input':
+                return 'html';
+            case 'currency':
+            case 'price':
+                return 'text';
+            case 'url':
+                return 'external_link';
+            default:
+                return 'text';
+        }
+    },
+
+    /**
+     * Fallback when no config exists — introspects the dictionary to pick fields per section.
+     */
+    _getDefaultFields: function (rec, section) {
+        var ctx = '_getDefaultFields[' + section + ']';
+
+        try {
+            if (section === 'header') {
+                var candidates = [
+                    this._pickFirstExistingField(rec, ['number', 'name']),
+                    this._pickFirstExistingField(rec, ['opened_by', 'caller_id', 'requested_for', 'requested_by']),
+                    'state',
+                    'priority',
+                    'sys_updated_on',
+                    'sys_created_on'
+                ];
+                var picked = candidates
+                    .filter(function (f) { return f && rec.getElement(f); })
+                    .slice(0, 6)
+                    .map(function (name) { return { field_name: name }; });
+
+                this._log('debug', ctx, 'Picked ' + picked.length + ' header fields: ' +
+                    JSON.stringify(picked));
+                return picked;
+            }
+
+            if (section === 'primary') {
+                var primary = ['short_description', 'description']
+                    .filter(function (f) { return rec.getElement(f); })
+                    .map(function (name) { return { field_name: name }; });
+
+                this._log('debug', ctx, 'Picked ' + primary.length + ' primary fields: ' +
+                    JSON.stringify(primary));
+                return primary;
+            }
+
+            if (section === 'details') {
+                var excluded = {
+                    number: 1, name: 1, opened_by: 1, caller_id: 1, requested_for: 1, requested_by: 1,
+                    state: 1, priority: 1, sys_updated_on: 1, sys_created_on: 1,
+                    short_description: 1, description: 1
+                };
+                var skipTypes = {
+                    'collection': 1, 'password2': 1, 'password': 1,
+                    'script': 1, 'script_plain': 1, 'xml': 1
+                };
+
+                var fields = [];
+                var elements = rec.getElements();
+                for (var i = 0; i < elements.size(); i++) {
+                    var el = elements.get(i);
+                    var name = el.getName() + '';
+                    if (excluded[name]) continue;
+                    if (name.indexOf('sys_') === 0 && name !== 'sys_id') continue;
+
+                    var ed = el.getED();
+                    var type = ed.getInternalType() + '';
+                    if (skipTypes[type]) continue;
+
+                    var value = rec.getValue(name);
+                    if (value === null || value === '' || value === undefined) continue;
+
+                    fields.push({ field_name: name, _label: ed.getLabel() + '' });
+                }
+
+                fields.sort(function (a, b) { return a._label.localeCompare(b._label); });
+                var trimmed = fields.slice(0, 20).map(function (f) {
+                    return { field_name: f.field_name };
+                });
+
+                this._log('debug', ctx, 'Picked ' + trimmed.length + ' details fields (from ' +
+                    fields.length + ' candidates): ' + JSON.stringify(trimmed));
+                return trimmed;
+            }
+
+            this._log('warn', ctx, 'Unknown section — returning empty');
+            return [];
+
+        } catch (err) {
+            this._log('error', ctx, 'Exception: ' + err +
+                ' | stack: ' + (err.stack || 'no stack'));
+            return [];
+        }
+    },
+
+    _pickFirstExistingField: function (rec, candidates) {
+        for (var i = 0; i < candidates.length; i++) {
+            if (rec.getElement(candidates[i])) return candidates[i];
+        }
+        return null;
+    },
+
+    // ── Logging helper ──────────────────────────────────────────────────────
+
+    /**
+     * Centralized logger. Routes to gs.info/warn/error based on level.
+     * All messages are prefixed with LOG_PREFIX and the calling context for grep-ability.
+     *
+     * Usage: this._log('info', 'methodName', 'message');
+     */
+    _log: function (level, ctx, message) {
+        var levelOrder = { debug: 0, info: 1, warn: 2, error: 3 };
+        var configured = levelOrder[this.LOG_LEVEL] || 0;
+        var msgLevel = levelOrder[level] || 0;
+
+        if (msgLevel < configured) return;
+
+        var fullMsg = '[' + this.LOG_PREFIX + '][' + level.toUpperCase() + '][' + ctx + '] ' + message;
+
+        if (level === 'error') {
+            gs.error(fullMsg);
+        } else if (level === 'warn') {
+            gs.warn(fullMsg);
+        } else {
+            // gs.info handles both 'info' and 'debug'
+            gs.info(fullMsg);
+        }
+    },
+
+    type: 'GENDynamicRecordViewUtility'
 };
 
+```
+
+```javascript
+// 5. Build variables (only populated for sc_req_item records; empty array otherwise)
+data.variables = dlacDRVU.buildVariables(rec);
+data.hasVariables = data.variables.length > 0;
+```
+
+```html
+<!-- More Details expander -->
+<div ng-if="data.hasDetails || data.hasVariables" class="details-section">
+  <a ng-click="showDetails = !showDetails" class="title-medium more-details-toggle">
+    {{showDetails ? 'Less Details' : 'More Details'}}
+    <i class="fa" ng-class="{'fa-angle-down': !showDetails, 'fa-angle-up': showDetails}"></i>
+  </a>
+
+  <div ng-if="showDetails">
+
+    <!-- Existing details grid -->
+    <div ng-if="data.hasDetails" class="details-grid">
+      <div class="details-cell field-block"
+           ng-repeat="f in data.sections.details track by f.name">
+        <div class="title-medium field-label">{{f.label}}:</div>
+        <div class="body-large field-value">
+          <!-- ... existing ng-switch block ... -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Variables sub-section, only for RITMs -->
+    <div ng-if="data.hasVariables" class="variables-subsection">
+      <h5 class="title-medium variables-heading">Variables</h5>
+      <div class="details-grid">
+        <div class="details-cell field-block"
+             ng-repeat="v in data.variables track by v.name">
+          <div class="title-medium field-label">{{v.label}}:</div>
+          <div class="body-large field-value">
+            <!-- same ng-switch block, with `v` instead of `f` -->
+            <span ng-switch="v.render_as">
+              <span ng-switch-when="link">
+                <a ng-if="v.ref_sys_id" ng-href="/sp?id=record-view&table={{v.ref_table}}&sys_id={{v.ref_sys_id}}">{{v.display_value}}</a>
+                <span ng-if="!v.ref_sys_id">{{v.display_value || '—'}}</span>
+              </span>
+              <span ng-switch-when="badge"><span class="label label-default">{{v.display_value || '—'}}</span></span>
+              <span ng-switch-when="date"><span title="{{v.value}}">{{v.display_value || 'N/A'}}</span></span>
+              <span ng-switch-default>{{v.display_value || v.value || '—'}}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+```
+
+```scss
+.variables-subsection {
+  margin-top: var(--field-gap);
+  padding-top: var(--field-gap);
+  border-top: 1px solid #eee;
+
+  .variables-heading {
+    margin: 0 0 var(--field-gap) 0;
+    color: $Neutral-700;
+  }
+}
 ```
 
 ```javascript
