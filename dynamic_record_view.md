@@ -62,8 +62,8 @@ Most common gotcha: if your config doesn't seem to apply, double-check that Acti
 ┌─────────────────────────────────────────────────────────────┐
 │  Portal Page: /sp?id=record-view&table=sc_req_item&sys_id=..│
 └─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
+                        │
+                        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Widget: Dynamic Record View                                 │
 │  ┌─────────────────────────────────────────────────────────┐ │
@@ -143,9 +143,9 @@ if (!fieldName || !configSysId) return;
 
 var cfg = new GlideRecord('x_gensync_record_view_config');
 if (!cfg.get(configSysId)) {
-  gs.addErrorMessage('Invalid config reference');
-  current.setAbortAction(true);
-  return;
+gs.addErrorMessage('Invalid config reference');
+current.setAbortAction(true);
+return;
 }
 var tableName = cfg.getValue('table');
 
@@ -158,8 +158,8 @@ dict.addQuery('element', fieldName);
 dict.setLimit(1);
 dict.query();
 if (!dict.next()) {
-  gs.addErrorMessage('Field "' + fieldName + '" does not exist on table "' + tableName + '" or any parent table.');
-  current.setAbortAction(true);
+gs.addErrorMessage('Field "' + fieldName + '" does not exist on table "' + tableName + '" or any parent table.');
+current.setAbortAction(true);
 }
 })(current, previous);
 ```
@@ -187,23 +187,23 @@ The widget should accept everything via options *or* URL params, with URL params
 ```json
 [
 {
-  "name": "table",
-  "label": "Table",
-  "type": "string",
-  "hint": "Table name. Overridden by ?table= URL param."
+"name": "table",
+"label": "Table",
+"type": "string",
+"hint": "Table name. Overridden by ?table= URL param."
 },
 {
-  "name": "sys_id",
-  "label": "Record Sys ID",
-  "type": "string",
-  "hint": "Sys ID of the record. Overridden by ?sys_id= URL param."
+"name": "sys_id",
+"label": "Record Sys ID",
+"type": "string",
+"hint": "Sys ID of the record. Overridden by ?sys_id= URL param."
 },
 {
-  "name": "allow_default_config",
-  "label": "Allow Default Fallback",
-  "type": "boolean",
-  "default_value": "true",
-  "hint": "If no config row exists for the table, fall back to sensible defaults instead of showing an error."
+"name": "allow_default_config",
+"label": "Allow Default Fallback",
+"type": "boolean",
+"default_value": "true",
+"hint": "If no config row exists for the table, fall back to sensible defaults instead of showing an error."
 }
 ]
 ```
@@ -219,695 +219,941 @@ The widget should accept everything via options *or* URL params, with URL params
 var GENDynamicRecordViewUtility = Class.create();
 GENDynamicRecordViewUtility.prototype = {
 
-    // ── Logging configuration ───────────────────────────────────────────────
-    LOG_PREFIX: 'GENDynamicRecordView',
-    LOG_LEVEL: 'debug',  // 'debug' | 'info' | 'warn' | 'error' — controls verbosity
+// ── Logging configuration ───────────────────────────────────────────────
+LOG_PREFIX: 'GENDynamicRecordView',
+LOG_LEVEL: 'debug',  // 'debug' | 'info' | 'warn' | 'error' — controls verbosity
 
-    initialize: function () {
-        this._taskExtensionCache = {};
-        this._log('info', 'initialize', 'Utility instance created');
-    },
+initialize: function () {
+    this._taskExtensionCache = {};
+    this._variableNameCache = {};   // sys_id (item_option_new) → variable name
+    this._log('info', 'initialize', 'Utility instance created');
+},
 
-    // ── Public methods ──────────────────────────────────────────────────────
+// ── Public methods ──────────────────────────────────────────────────────
 
-    /**
-     * Load the record view config for a given table.
-     * Returns null if no active config exists, or if an error occurs.
-     */
-    loadConfig: function (table) {
-        var ctx = 'loadConfig';
-        this._log('info', ctx, 'Called with table=' + table);
+loadConfig: function (table) {
+    var ctx = 'loadConfig';
+    this._log('info', ctx, 'Called with table=' + table);
 
-        if (!table) {
-            this._log('warn', ctx, 'No table provided — returning null');
+    if (!table) {
+        this._log('warn', ctx, 'No table provided — returning null');
+        return null;
+    }
+
+    try {
+        var gr = new GlideRecord('x_g_dla_dla_connec_record_view_config');
+        gr.addQuery('table.name', table);   // table is a reference to sys_db_object — dot-walk to query by name
+        gr.addQuery('active', true);
+        gr.setLimit(1);
+        gr.query();
+
+        this._log('debug', ctx, 'Query encoded: ' + gr.getEncodedQuery());
+
+        if (!gr.next()) {
+            this._log('info', ctx, 'No active config found for table=' + table);
             return null;
         }
 
-        try {
-            var gr = new GlideRecord('x_g_dla_dla_connec_record_view_config');
-            gr.addQuery('table', table);
-            gr.addQuery('active', true);
-            gr.setLimit(1);
-            gr.query();
+        var cfg = {
+            sys_id: gr.getUniqueValue(),
+            title_field: gr.getValue('title_field'),
+            fields: { header: [], primary: [], details: [] }
+        };
 
-            this._log('debug', ctx, 'Query encoded: ' + gr.getEncodedQuery());
+        this._log('debug', ctx, 'Config record loaded: sys_id=' + cfg.sys_id +
+            ', title_field=' + cfg.title_field);
 
-            if (!gr.next()) {
-                this._log('info', ctx, 'No active config found for table=' + table);
-                return null;
-            }
+        var fg = new GlideRecord('x_g_dla_dla_connec_record_view_field');
+        fg.addQuery('config', cfg.sys_id);
+        fg.orderBy('section');
+        fg.orderBy('order');
+        fg.query();
 
-            var cfg = {
-                sys_id: gr.getUniqueValue(),
-                title_field: gr.getValue('title_field'),
-                fields: { header: [], primary: [], details: [] }
+        var fieldCount = 0;
+        while (fg.next()) {
+            var section = fg.getValue('section') + '';
+            var fieldName = fg.getValue('field_name') + '';
+            var labelOverride = (fg.getValue('label_override') || '') + '';
+
+            var fieldEntry = {
+                field_name: fieldName,
+                label_override: labelOverride
             };
 
-            this._log('debug', ctx, 'Config record loaded: sys_id=' + cfg.sys_id +
-                ', title_field=' + cfg.title_field);
-
-            // Load child field rows
-            var fg = new GlideRecord('x_g_dla_dla_connec_record_view_field');
-            fg.addQuery('config', cfg.sys_id);
-            fg.orderBy('section');
-            fg.orderBy('order');
-            fg.query();
-
-            var fieldCount = 0;
-            while (fg.next()) {
-                var section = fg.getValue('section') + '';
-                var fieldName = fg.getValue('field_name') + '';
-                var labelOverride = (fg.getValue('label_override') || '') + '';
-
-                var fieldEntry = {
-                    field_name: fieldName,
-                    label_override: labelOverride
-                };
-
-                if (section === 'header') {
-                    cfg.fields.header.push(fieldEntry);
-                    fieldCount++;
-                } else if (section === 'primary') {
-                    cfg.fields.primary.push(fieldEntry);
-                    fieldCount++;
-                } else if (section === 'details') {
-                    cfg.fields.details.push(fieldEntry);
-                    fieldCount++;
-                } else {
-                    this._log('warn', ctx, 'Unknown section value: "' + section +
-                        '" (length=' + section.length + ') for field=' + fieldName);
-                }
-            }
-            this._log('info', ctx, 'Config loaded successfully. Total fields=' + fieldCount +
-                ' (header=' + cfg.fields.header.length +
-                ', primary=' + cfg.fields.primary.length +
-                ', details=' + cfg.fields.details.length + ')');
-            this._log('debug', ctx, 'Full config: ' + JSON.stringify(cfg));
-
-            return cfg;
-
-        } catch (err) {
-            this._log('error', ctx, 'Exception while loading config: ' + err +
-                ' | stack: ' + (err.stack || 'no stack'));
-            return null;
-        }
-    },
-
-    /**
-     * Build the array of field descriptors for a given section.
-     * Falls back to default field selection when no config is provided.
-     */
-    buildSection: function (rec, config, section) {
-        var ctx = 'buildSection[' + section + ']';
-        var self = this;
-
-        try {
-            this._log('debug', ctx, 'Called. config provided=' + !!config +
-                ', table=' + (rec ? rec.getTableName() : 'null'));
-
-            if (!rec) {
-                this._log('error', ctx, 'No record provided — returning empty array');
-                return [];
-            }
-
-            var fields;
-            var usingConfig = !!(config && config.fields && config.fields[section] &&
-                config.fields[section].length > 0);
-
-            if (usingConfig) {
-                fields = config.fields[section];
-                this._log('info', ctx, 'Using configured fields. count=' + fields.length);
+            if (section === 'header') {
+                cfg.fields.header.push(fieldEntry);
+                fieldCount++;
+            } else if (section === 'primary') {
+                cfg.fields.primary.push(fieldEntry);
+                fieldCount++;
+            } else if (section === 'details') {
+                cfg.fields.details.push(fieldEntry);
+                fieldCount++;
             } else {
-                fields = this._getDefaultFields(rec, section);
-                this._log('info', ctx, 'Using default fields (no config). count=' + fields.length);
+                this._log('warn', ctx, 'Unknown section value: "' + section +
+                    '" (length=' + section.length + ') for field=' + fieldName);
             }
+        }
+        this._log('info', ctx, 'Config loaded successfully. Total fields=' + fieldCount +
+            ' (header=' + cfg.fields.header.length +
+            ', primary=' + cfg.fields.primary.length +
+            ', details=' + cfg.fields.details.length + ')');
+        this._log('debug', ctx, 'Full config: ' + JSON.stringify(cfg));
 
-            this._log('debug', ctx, 'Field list: ' + JSON.stringify(fields));
+        return cfg;
 
-            var descriptors = fields.map(function (f) {
-                return self._describeField(rec, f);
-            }).filter(function (d) {
-                return d !== null;
-            });
+    } catch (err) {
+        this._log('error', ctx, 'Exception while loading config: ' + err +
+            ' | stack: ' + (err.stack || 'no stack'));
+        return null;
+    }
+},
 
-            this._log('info', ctx, 'Built ' + descriptors.length + ' descriptor(s) (filtered from ' +
-                fields.length + ' raw)');
+buildSection: function (rec, config, section) {
+    var ctx = 'buildSection[' + section + ']';
+    var self = this;
 
-            return descriptors;
+    try {
+        this._log('debug', ctx, 'Called. config provided=' + !!config +
+            ', table=' + (rec ? rec.getTableName() : 'null'));
 
-        } catch (err) {
-            this._log('error', ctx, 'Exception: ' + err +
-                ' | stack: ' + (err.stack || 'no stack'));
+        if (!rec) {
+            this._log('error', ctx, 'No record provided — returning empty array');
             return [];
         }
-    },
 
-    /**
-     * Resolve the title for the record. Uses config.title_field if set,
-     * otherwise falls back to short_description → number → record display value.
-     */
-    buildTitle: function (rec, config) {
-        var ctx = 'buildTitle';
+        var fields;
+        var usingConfig = !!(config && config.fields && config.fields[section] &&
+            config.fields[section].length > 0);
 
-        try {
-            if (!rec) {
-                this._log('warn', ctx, 'No record provided');
-                return 'Record';
-            }
+        if (usingConfig) {
+            fields = config.fields[section];
+            this._log('info', ctx, 'Using configured fields. count=' + fields.length);
+        } else {
+            fields = this._getDefaultFields(rec, section);
+            this._log('info', ctx, 'Using default fields (no config). count=' + fields.length);
+        }
 
-            if (config && config.title_field) {
-                var configured = rec.getDisplayValue(config.title_field);
-                this._log('info', ctx, 'Using configured title_field="' + config.title_field +
-                    '" → "' + configured + '"');
-                if (configured) return configured;
-                this._log('warn', ctx, 'Configured title_field returned empty — falling back');
-            }
+        this._log('debug', ctx, 'Field list: ' + JSON.stringify(fields));
 
-            var fallback = rec.getDisplayValue('short_description') ||
-                rec.getDisplayValue('number') ||
-                rec.getDisplayValue() ||
-                'Record';
+        var descriptors = fields.map(function (f) {
+            return self._describeField(rec, f);
+        }).filter(function (d) {
+            return d !== null;
+        });
 
-            this._log('info', ctx, 'Using fallback title → "' + fallback + '"');
-            return fallback;
+        this._log('info', ctx, 'Built ' + descriptors.length + ' descriptor(s) (filtered from ' +
+            fields.length + ' raw)');
 
-        } catch (err) {
-            this._log('error', ctx, 'Exception: ' + err +
-                ' | stack: ' + (err.stack || 'no stack'));
+        return descriptors;
+
+    } catch (err) {
+        this._log('error', ctx, 'Exception: ' + err +
+            ' | stack: ' + (err.stack || 'no stack'));
+        return [];
+    }
+},
+
+buildTitle: function (rec, config) {
+    var ctx = 'buildTitle';
+
+    try {
+        if (!rec) {
+            this._log('warn', ctx, 'No record provided');
             return 'Record';
         }
-    },
 
-    /**
-     * Build variable descriptors for an sc_req_item record.
-     * Returns an empty array for any other table.
-     *
-     * Strategy:
-     *  1. Query item_option_new for all active variables on this RITM's catalog item
-     *     AND from any variable sets attached to that catalog item.
-     *  2. For each variable definition, read the value off rec.variables[<name>] —
-     *     this handles the joins through sc_item_option_mtom / sc_item_option for us.
-     *  3. Skip layout-only types (container_start, container_end, container_split,
-     *     label, break, macro, etc.) since they hold no data.
-     *  4. Skip HTML variables for v1 to avoid having to sanitize rich text in the
-     *     widget — can be added later via the existing 'html' render mode.
-     */
-    buildVariables: function (rec) {
-        var ctx = 'buildVariables';
+        if (config && config.title_field) {
+            var configured = rec.getDisplayValue(config.title_field);
+            this._log('info', ctx, 'Using configured title_field="' + config.title_field +
+                '" → "' + configured + '"');
+            if (configured) return configured;
+            this._log('warn', ctx, 'Configured title_field returned empty — falling back');
+        }
 
-        try {
-            if (!rec) {
-                this._log('warn', ctx, 'No record provided');
-                return [];
-            }
+        var fallback = rec.getDisplayValue('short_description') ||
+            rec.getDisplayValue('number') ||
+            rec.getDisplayValue() ||
+            'Record';
 
-            var tableName = rec.getTableName() + '';
-            if (tableName !== 'sc_req_item') {
-                this._log('debug', ctx, 'Not an sc_req_item (table=' + tableName + ') — skipping');
-                return [];
-            }
+        this._log('info', ctx, 'Using fallback title → "' + fallback + '"');
+        return fallback;
 
-            var catItemId = rec.getValue('cat_item');
-            if (!catItemId) {
-                this._log('warn', ctx, 'RITM has no cat_item — cannot resolve variables');
-                return [];
-            }
+    } catch (err) {
+        this._log('error', ctx, 'Exception: ' + err +
+            ' | stack: ' + (err.stack || 'no stack'));
+        return 'Record';
+    }
+},
 
-            this._log('info', ctx, 'Building variables for RITM cat_item=' + catItemId);
+/**
+ * Build variable descriptors for an sc_req_item record, with UI Policy
+ * visibility filtering applied.
+ */
+buildVariables: function (rec) {
+    var ctx = 'buildVariables';
 
-            // Collect variable set sys_ids attached to this catalog item.
-            var variableSetIds = this._getVariableSetIdsForCatItem(catItemId);
-            this._log('debug', ctx, 'Found ' + variableSetIds.length +
-                ' variable set(s) for cat_item');
-
-            // Query variable definitions: those on the catalog item directly OR on any of its sets.
-            // Encoded query: cat_item=X^ORvariable_setINid1,id2,...
-            var defs = new GlideRecord('item_option_new');
-            defs.addQuery('active', true);
-
-            var ownership = defs.addQuery('cat_item', catItemId);
-            if (variableSetIds.length > 0) {
-                ownership.addOrCondition('variable_set', 'IN', variableSetIds.join(','));
-            }
-            defs.orderBy('order');
-            defs.query();
-
-            var descriptors = [];
-            var skippedLayout = 0;
-            var skippedHtml = 0;
-
-            while (defs.next()) {
-                var varName = defs.getValue('name') + '';
-                var typeCode = defs.getValue('type') + '';
-                var label = (defs.getValue('question_text') || varName) + '';
-
-                // Skip layout-only and HTML types per v1 scope.
-                if (this._isLayoutVariableType(typeCode)) {
-                    skippedLayout++;
-                    continue;
-                }
-                if (this._isHtmlVariableType(typeCode)) {
-                    skippedHtml++;
-                    continue;
-                }
-
-                var desc = this._describeVariable(rec, varName, typeCode, label);
-                if (desc) {
-                    descriptors.push(desc);
-                }
-            }
-
-            this._log('info', ctx, 'Built ' + descriptors.length + ' variable descriptor(s). ' +
-                'Skipped ' + skippedLayout + ' layout, ' + skippedHtml + ' html');
-
-            return descriptors;
-
-        } catch (err) {
-            this._log('error', ctx, 'Exception: ' + err +
-                ' | stack: ' + (err.stack || 'no stack'));
+    try {
+        if (!rec) {
+            this._log('warn', ctx, 'No record provided');
             return [];
         }
-    },
 
-    // ── Private helpers ─────────────────────────────────────────────────────
-
-    /**
-     * Returns the array of variable set sys_ids associated with a given catalog item,
-     * via the io_set_item join table.
-     */
-    _getVariableSetIdsForCatItem: function (catItemId) {
-        var ctx = '_getVariableSetIdsForCatItem';
-        var ids = [];
-
-        try {
-            var ios = new GlideRecord('io_set_item');
-            ios.addQuery('sc_cat_item', catItemId);
-            ios.query();
-            while (ios.next()) {
-                var setId = ios.getValue('variable_set');
-                if (setId) ids.push(setId + '');
-            }
-        } catch (err) {
-            this._log('error', ctx, 'Exception: ' + err);
+        var tableName = rec.getTableName() + '';
+        if (tableName !== 'sc_req_item') {
+            this._log('debug', ctx, 'Not an sc_req_item (table=' + tableName + ') — skipping');
+            return [];
         }
 
-        return ids;
-    },
+        var catItemId = rec.getValue('cat_item');
+        if (!catItemId) {
+            this._log('warn', ctx, 'RITM has no cat_item — cannot resolve variables');
+            return [];
+        }
 
-    /**
-     * Build a descriptor for a single RITM variable.
-     * Shape matches _describeField output so the widget template can render both with
-     * the same ng-switch block.
-     */
-    _describeVariable: function (rec, varName, typeCode, label) {
-        var ctx = '_describeVariable';
+        this._log('info', ctx, 'Building variables for RITM cat_item=' + catItemId);
 
-        try {
-            // The .variables.<name> accessor walks sc_item_option_mtom → sc_item_option for us.
-            var variableValue = rec.variables[varName];
-            var rawValue = '';
-            var displayValue = '';
+        var variableSetIds = this._getVariableSetIdsForCatItem(catItemId);
+        this._log('debug', ctx, 'Found ' + variableSetIds.length +
+            ' variable set(s) for cat_item');
 
-            if (variableValue !== undefined && variableValue !== null) {
-                // toString() gives the raw stored value (sys_id for references, raw for others).
-                rawValue = variableValue.toString();
+        // Query all variable definitions for this cat item + its variable sets
+        var defs = new GlideRecord('item_option_new');
+        defs.addQuery('active', true);
 
-                // getDisplayValue() resolves references and choice labels. Falls back to raw.
-                if (typeof variableValue.getDisplayValue === 'function') {
-                    displayValue = variableValue.getDisplayValue() + '';
-                } else {
-                    displayValue = rawValue;
-                }
+        var ownership = defs.addQuery('cat_item', catItemId);
+        if (variableSetIds.length > 0) {
+            ownership.addOrCondition('variable_set', 'IN', variableSetIds.join(','));
+        }
+        defs.orderBy('order');
+        defs.query();
+
+        // Build variable definitions list and seed the name cache
+        var variableDefs = [];
+        while (defs.next()) {
+            var def = {
+                sys_id: defs.getUniqueValue(),
+                name: defs.getValue('name') + '',
+                type: defs.getValue('type') + '',
+                label: (defs.getValue('question_text') || defs.getValue('name')) + ''
+            };
+            this._variableNameCache[def.sys_id] = def.name;
+            variableDefs.push(def);
+        }
+
+        this._log('debug', ctx, 'Loaded ' + variableDefs.length + ' variable definition(s)');
+
+        // Compute UI Policy-driven hidden variable set
+        var hiddenVariables = this._getHiddenVariableNames(rec, catItemId, variableSetIds);
+        this._log('info', ctx, 'UI Policies hide ' + hiddenVariables.length + ' variable(s): ' +
+            JSON.stringify(hiddenVariables));
+
+        // Build descriptors, skipping layout/html types AND policy-hidden variables
+        var descriptors = [];
+        var skippedLayout = 0;
+        var skippedHtml = 0;
+
+        for (var i = 0; i < variableDefs.length; i++) {
+            var vDef = variableDefs[i];
+
+            if (this._isLayoutVariableType(vDef.type)) {
+                skippedLayout++;
+                continue;
+            }
+            if (this._isHtmlVariableType(vDef.type)) {
+                skippedHtml++;
+                continue;
+            }
+            if (hiddenVariables.indexOf(vDef.name) !== -1) {
+                this._log('debug', ctx, 'Variable "' + vDef.name +
+                    '" hidden by UI Policy — skipping');
+                continue;
             }
 
-            var desc = {
-                name: 'variable_' + varName,   // namespaced to avoid collision with field names
-                label: label,
-                type: 'variable_' + typeCode,
-                value: rawValue,
-                display_value: displayValue,
-                render_as: this._deriveVariableRenderAs(typeCode),
-                is_variable: true              // flag for template/CSS if useful later
+            var desc = this._describeVariable(rec, vDef.name, vDef.type, vDef.label);
+            if (desc) {
+                descriptors.push(desc);
+            }
+        }
+
+        this._log('info', ctx, 'Built ' + descriptors.length + ' variable descriptor(s). ' +
+            'Skipped ' + skippedLayout + ' layout, ' + skippedHtml + ' html, ' +
+            hiddenVariables.length + ' policy-hidden');
+
+        return descriptors;
+
+    } catch (err) {
+        this._log('error', ctx, 'Exception: ' + err +
+            ' | stack: ' + (err.stack || 'no stack'));
+        return [];
+    }
+},
+
+// ── UI Policy evaluation ───────────────────────────────────────────────
+
+/**
+ * Returns an array of variable names that should be hidden based on Catalog UI Policies.
+ */
+_getHiddenVariableNames: function (rec, catItemId, variableSetIds) {
+    var ctx = '_getHiddenVariableNames';
+    var visibilityMap = {};   // name → 'visible' | 'hidden' (last write wins)
+
+    try {
+        var policies = this._getApplicablePolicies(catItemId, variableSetIds);
+        this._log('info', ctx, 'Found ' + policies.length + ' applicable UI Policies');
+
+        if (policies.length === 0) return [];
+
+        // Process policies in order ascending — later policies override earlier ones
+        for (var i = 0; i < policies.length; i++) {
+            var policy = policies[i];
+
+            if (policy.uses_scripts) {
+                this._log('warn', ctx, 'Policy "' + policy.short_description +
+                    '" (' + policy.sys_id + ') uses scripts — skipping. ' +
+                    'Variables affected by this policy may not hide correctly.');
+                continue;
+            }
+
+            var conditionsResult = this._evaluatePolicyConditions(policy, rec);
+            this._log('debug', ctx, 'Policy "' + policy.short_description +
+                '" conditions evaluated to ' + conditionsResult);
+
+            this._applyPolicyActions(policy, conditionsResult, visibilityMap);
+        }
+
+        // Convert visibilityMap to hidden names array
+        var hiddenNames = [];
+        for (var name in visibilityMap) {
+            if (visibilityMap[name] === 'hidden') {
+                hiddenNames.push(name);
+            }
+        }
+        return hiddenNames;
+
+    } catch (err) {
+        this._log('error', ctx, 'Exception: ' + err +
+            ' | stack: ' + (err.stack || 'no stack'));
+        return [];   // fail safe — show all variables if policy eval breaks
+    }
+},
+
+_getApplicablePolicies: function (catItemId, variableSetIds) {
+    var ctx = '_getApplicablePolicies';
+    var policies = [];
+
+    try {
+        var pol = new GlideRecord('catalog_ui_policy');
+        pol.addQuery('active', true);
+
+        var orQuery = pol.addQuery('catalog_item', catItemId);
+        if (variableSetIds.length > 0) {
+            orQuery.addOrCondition('variable_set', 'IN', variableSetIds.join(','));
+        }
+        pol.orderBy('order');
+        pol.query();
+
+        while (pol.next()) {
+            var policy = {
+                sys_id: pol.getUniqueValue(),
+                short_description: pol.getValue('short_description') + '',
+                reverse_if_false: pol.getValue('reverse_if_false') + '' === 'true',
+                on_load: pol.getValue('on_load') + '' === 'true',
+                order: parseInt(pol.getValue('order') || '0', 10),
+                uses_scripts: this._policyUsesScripts(pol),
+                conditions: [],
+                actions: []
             };
 
-            // For reference-type variables, expose ref info if the target extends task.
-            // Type code 8 = reference variable.
-            if (typeCode === '8' && rawValue) {
-                var refTable = this._getReferenceVariableTargetTable(rec, varName);
-                if (refTable && this._targetExtendsTask(refTable)) {
-                    desc.ref_sys_id = rawValue;
-                    desc.ref_table = refTable;
-                } else {
-                    desc.render_as = 'text';
-                }
-            }
-
-            return desc;
-
-        } catch (err) {
-            this._log('error', ctx, 'Exception describing variable "' + varName + '": ' + err +
-                ' | stack: ' + (err.stack || 'no stack'));
-            return null;
+            policies.push(policy);
         }
-    },
 
-    /**
-     * For reference variables, look up which table they reference.
-     * The reference table is stored on the item_option_new definition.
-     */
-    _getReferenceVariableTargetTable: function (rec, varName) {
+        // Load conditions and actions for each policy
+        for (var i = 0; i < policies.length; i++) {
+            policies[i].conditions = this._loadPolicyConditions(policies[i].sys_id);
+            policies[i].actions = this._loadPolicyActions(policies[i].sys_id);
+        }
+
+        this._log('debug', ctx, 'Loaded ' + policies.length + ' policies with conditions/actions');
+        return policies;
+
+    } catch (err) {
+        this._log('error', ctx, 'Exception: ' + err);
+        return [];
+    }
+},
+
+_policyUsesScripts: function (polGr) {
+    var scriptTrue = (polGr.getValue('script_true') || '') + '';
+    var scriptFalse = (polGr.getValue('script_false') || '') + '';
+    return (scriptTrue.replace(/\s+/g, '') !== '' || scriptFalse.replace(/\s+/g, '') !== '');
+},
+
+_loadPolicyConditions: function (policySysId) {
+    var conditions = [];
+    try {
+        var cond = new GlideRecord('catalog_conditions');
+        cond.addQuery('cat_ui_policy', policySysId);
+        cond.orderBy('order');
+        cond.query();
+
+        while (cond.next()) {
+            conditions.push({
+                cat_variable: cond.getValue('cat_variable') + '',
+                condition: cond.getValue('condition') + '',
+                value: (cond.getValue('value') || '') + '',
+                order: parseInt(cond.getValue('order') || '0', 10)
+            });
+        }
+    } catch (err) {
+        this._log('warn', '_loadPolicyConditions',
+            'Failed to load conditions for policy ' + policySysId + ': ' + err);
+    }
+    return conditions;
+},
+
+_loadPolicyActions: function (policySysId) {
+    var actions = [];
+    try {
+        var act = new GlideRecord('catalog_ui_policy_action');
+        act.addQuery('ui_policy', policySysId);
+        act.query();
+
+        while (act.next()) {
+            actions.push({
+                catalog_variable: act.getValue('catalog_variable') + '',
+                variable: (act.getValue('variable') || '') + '',
+                visible: (act.getValue('visible') || 'leave_alone') + '',
+                mandatory: (act.getValue('mandatory') || 'leave_alone') + '',
+                disabled: (act.getValue('disabled') || 'leave_alone') + ''
+            });
+        }
+    } catch (err) {
+        this._log('warn', '_loadPolicyActions',
+            'Failed to load actions for policy ' + policySysId + ': ' + err);
+    }
+    return actions;
+},
+
+/**
+ * Evaluate all conditions on a policy. AND semantics — all must be true.
+ */
+_evaluatePolicyConditions: function (policy, rec) {
+    if (policy.conditions.length === 0) {
+        return true;   // no conditions = always apply
+    }
+
+    for (var i = 0; i < policy.conditions.length; i++) {
+        var conditionResult = this._evaluateCondition(policy.conditions[i], rec);
+        if (!conditionResult) {
+            return false;
+        }
+    }
+    return true;
+},
+
+/**
+ * Evaluate a single condition. Returns true/false. Fails safe to false.
+ */
+_evaluateCondition: function (condition, rec) {
+    var ctx = '_evaluateCondition';
+
+    try {
+        var varName = this._resolveVariableName(condition.cat_variable);
+        if (!varName) {
+            this._log('debug', ctx, 'Could not resolve variable for cat_variable="' +
+                condition.cat_variable + '" — treating condition as false');
+            return false;
+        }
+
+        var variableElem = rec.variables[varName];
+        var rawValue = '';
+        if (variableElem !== undefined && variableElem !== null) {
+            rawValue = variableElem.toString();
+        }
+
+        var operator = condition.condition + '';
+        var compareValue = condition.value + '';
+
+        return this._applyOperator(operator, rawValue, compareValue);
+
+    } catch (err) {
+        this._log('warn', ctx, 'Condition evaluation failed: ' + err +
+            ' — treating as false');
+        return false;
+    }
+},
+
+/**
+ * Apply a comparison operator. Unsupported operators return false.
+ */
+_applyOperator: function (operator, actual, expected) {
+    var ctx = '_applyOperator';
+    actual = (actual || '') + '';
+    expected = (expected || '') + '';
+
+    switch (operator) {
+        case 'is':
+        case '=':
+            return actual === expected;
+        case 'is not':
+        case '!=':
+            return actual !== expected;
+        case 'is empty':
+            return actual === '';
+        case 'is not empty':
+            return actual !== '';
+        case 'contains':
+            return actual.indexOf(expected) !== -1;
+        case 'does not contain':
+            return actual.indexOf(expected) === -1;
+        case 'starts with':
+            return actual.indexOf(expected) === 0;
+        case 'ends with':
+            return actual.length >= expected.length &&
+                actual.lastIndexOf(expected) === actual.length - expected.length;
+        case 'greater than':
+        case '>':
+            return parseFloat(actual) > parseFloat(expected);
+        case 'less than':
+        case '<':
+            return parseFloat(actual) < parseFloat(expected);
+        case 'greater than or is':
+        case '>=':
+            return parseFloat(actual) >= parseFloat(expected);
+        case 'less than or is':
+        case '<=':
+            return parseFloat(actual) <= parseFloat(expected);
+        default:
+            this._log('warn', ctx, 'Unsupported operator "' + operator +
+                '" — treating as false');
+            return false;
+    }
+},
+
+/**
+ * Apply policy actions to the visibility map.
+ * If conditions true → apply actions as-is.
+ * If conditions false and reverse_if_false → flip visibility.
+ * If conditions false and !reverse_if_false → no-op.
+ */
+_applyPolicyActions: function (policy, conditionsResult, visibilityMap) {
+    var ctx = '_applyPolicyActions';
+
+    var shouldApply = conditionsResult;
+    var shouldReverse = false;
+    if (!conditionsResult) {
+        if (policy.reverse_if_false) {
+            shouldApply = true;
+            shouldReverse = true;
+        } else {
+            return;
+        }
+    }
+
+    if (!shouldApply) return;
+
+    for (var i = 0; i < policy.actions.length; i++) {
+        var action = policy.actions[i];
+        var visibleValue = action.visible + '';
+
+        if (visibleValue === 'leave_alone' || visibleValue === '') continue;
+
+        var targetVarName = this._resolveVariableName(action.catalog_variable) ||
+            this._resolveVariableName(action.variable);
+        if (!targetVarName) {
+            this._log('debug', ctx, 'Could not resolve target variable for action on policy "' +
+                policy.short_description + '" — skipping action');
+            continue;
+        }
+
+        var finalVisible;
+        if (visibleValue === 'true') {
+            finalVisible = shouldReverse ? false : true;
+        } else if (visibleValue === 'false') {
+            finalVisible = shouldReverse ? true : false;
+        } else {
+            continue;
+        }
+
+        visibilityMap[targetVarName] = finalVisible ? 'visible' : 'hidden';
+        this._log('debug', ctx, 'Policy "' + policy.short_description + '" sets variable "' +
+            targetVarName + '" → ' + (finalVisible ? 'visible' : 'hidden') +
+            (shouldReverse ? ' (reversed)' : ''));
+    }
+},
+
+/**
+ * Resolve a UI Policy variable reference to a variable name.
+ * Handles: plain name "cost_center", "IO:<sys_id>" prefix, or bare sys_id.
+ */
+_resolveVariableName: function (catVariableRef) {
+    if (!catVariableRef) return null;
+    catVariableRef = (catVariableRef + '').trim();
+
+    // Strip IO: prefix if present
+    if (catVariableRef.indexOf('IO:') === 0) {
+        catVariableRef = catVariableRef.substring(3);
+    }
+
+    // 32-char hex = sys_id; resolve via item_option_new
+    if (catVariableRef.length === 32 && /^[a-f0-9]+$/i.test(catVariableRef)) {
+        if (this._variableNameCache.hasOwnProperty(catVariableRef)) {
+            return this._variableNameCache[catVariableRef];
+        }
+
         try {
             var def = new GlideRecord('item_option_new');
-            def.addQuery('cat_item', rec.getValue('cat_item'));
-            def.addQuery('name', varName);
-            def.setLimit(1);
-            def.query();
-            if (def.next()) {
-                return def.getValue('reference') + '';
-            }
-
-            // Fallback — variable might be on a variable set
-            var defSet = new GlideRecord('item_option_new');
-            defSet.addQuery('name', varName);
-            defSet.addNotNullQuery('variable_set');
-            defSet.setLimit(1);
-            defSet.query();
-            if (defSet.next()) {
-                return defSet.getValue('reference') + '';
+            if (def.get(catVariableRef)) {
+                var name = def.getValue('name') + '';
+                this._variableNameCache[catVariableRef] = name;
+                return name;
             }
         } catch (err) {
-            // Non-fatal; just return null and let caller render as text
+            // fall through
         }
+        this._variableNameCache[catVariableRef] = null;
         return null;
-    },
+    }
 
-    /**
-     * Variable type code → render mode.
-     * Type codes are integers stored as strings on item_option_new.type.
-     *
-     * Common codes:
-     *   1 = Yes/No                  → badge
-     *   2 = Multi Line Text         → text (preserve line breaks via primary-style CSS)
-     *   3 = Multiple Choice         → badge
-     *   4 = Numeric Scale           → text
-     *   5 = Select Box              → badge
-     *   6 = Single Line Text        → text
-     *   7 = Checkbox                → badge
-     *   8 = Reference               → link (handled in _describeVariable)
-     *   9 = Date                    → date
-     *  10 = Date/Time               → date
-     *  16 = HTML                    → (skipped in v1)
-     *  17 = Breakpoint (layout)     → (skipped in v1)
-     *  18 = Macro (layout)          → (skipped in v1)
-     *  19 = UI Page (layout)        → (skipped in v1)
-     *  20 = Wide Single Line Text   → text
-     *  21 = Container Start         → (skipped in v1)
-     *  22 = Container End           → (skipped in v1)
-     *  23 = List Collector          → text
-     *  24 = Lookup Select Box       → badge
-     *  25 = Lookup Multiple Choice  → badge
-     *  26 = HTML (alt)              → (skipped in v1)
-     *  31 = Container Split         → (skipped in v1)
-     *  32 = Masked                  → text
-     */
-    _deriveVariableRenderAs: function (typeCode) {
-        switch (typeCode + '') {
-            case '9':
-            case '10':
-                return 'date';
-            case '8':
-                return 'link';   // overridden to 'text' in _describeVariable if non-task
-            case '1':
-            case '3':
-            case '5':
-            case '7':
-            case '24':
-            case '25':
-                return 'badge';
-            default:
-                return 'text';
+    // Otherwise treat as a plain variable name
+    return catVariableRef;
+},
+
+// ── Existing helpers ───────────────────────────────────────────────────
+
+_getVariableSetIdsForCatItem: function (catItemId) {
+    var ctx = '_getVariableSetIdsForCatItem';
+    var ids = [];
+
+    try {
+        var ios = new GlideRecord('io_set_item');
+        ios.addQuery('sc_cat_item', catItemId);
+        ios.query();
+        while (ios.next()) {
+            var setId = ios.getValue('variable_set');
+            if (setId) ids.push(setId + '');
         }
-    },
+    } catch (err) {
+        this._log('error', ctx, 'Exception: ' + err);
+    }
 
-    /**
-     * True if the variable type is layout-only (container, label, break, macro, etc.) —
-     * these hold no user data and should be skipped.
-     */
-    _isLayoutVariableType: function (typeCode) {
-        var layoutTypes = { '11': 1, '17': 1, '18': 1, '19': 1, '21': 1, '22': 1, '31': 1 };
-        return !!layoutTypes[typeCode + ''];
-    },
+    return ids;
+},
 
-    /**
-     * True if the variable type is HTML/rich text — skipped in v1.
-     */
-    _isHtmlVariableType: function (typeCode) {
-        var htmlTypes = { '16': 1, '26': 1 };
-        return !!htmlTypes[typeCode + ''];
-    },
+_describeVariable: function (rec, varName, typeCode, label) {
+    var ctx = '_describeVariable';
 
-    /**
-     * Cache-aware check for whether a target table extends task.
-     * Cache lives on the instance — survives across calls within a single execution.
-     */
-    _targetExtendsTask: function (targetTable) {
-        var ctx = '_targetExtendsTask';
-        if (!targetTable) return false;
+    try {
+        var variableValue = rec.variables[varName];
+        var rawValue = '';
+        var displayValue = '';
 
-        if (this._taskExtensionCache.hasOwnProperty(targetTable)) {
-            this._log('debug', ctx, 'Cache hit for "' + targetTable + '" → ' +
-                this._taskExtensionCache[targetTable]);
-            return this._taskExtensionCache[targetTable];
-        }
+        if (variableValue !== undefined && variableValue !== null) {
+            rawValue = variableValue.toString();
 
-        var result = false;
-        if (targetTable === 'task') {
-            result = true;
-        } else {
-            try {
-                var tu = new TableUtils(targetTable);
-                var parents = tu.getTables() || [];
-                result = parents.indexOf('task') !== -1;
-            } catch (err) {
-                this._log('warn', ctx, 'TableUtils failed for "' + targetTable + '": ' + err);
-                result = false;
+            if (typeof variableValue.getDisplayValue === 'function') {
+                displayValue = variableValue.getDisplayValue() + '';
+            } else {
+                displayValue = rawValue;
             }
         }
 
-        this._taskExtensionCache[targetTable] = result;
-        this._log('debug', ctx, 'Resolved "' + targetTable + '" → ' + result + ' (cached)');
-        return result;
-    },
+        var desc = {
+            name: 'variable_' + varName,
+            label: label,
+            type: 'variable_' + typeCode,
+            value: rawValue,
+            display_value: displayValue,
+            render_as: this._deriveVariableRenderAs(typeCode),
+            is_variable: true
+        };
 
-    /**
-     * Build a field descriptor for a single field on the record.
-     * Returns null if the field doesn't exist on the record's table.
-     */
-    _describeField: function (rec, fieldDef) {
-        var ctx = '_describeField';
+        // Flag Yes/No (type 1) and Checkbox (type 7) variables as boolean
+        // so the template can color the badge green/red.
+        if (typeCode === '1' || typeCode === '7') {
+            desc.is_boolean = true;
+            desc.boolean_state = (rawValue === 'true' || rawValue === '1' || rawValue === 'yes')
+                ? 'true' : 'false';
+        }
 
+        if (typeCode === '8' && rawValue) {
+            var refTable = this._getReferenceVariableTargetTable(rec, varName);
+            if (refTable && this._targetExtendsTask(refTable)) {
+                desc.ref_sys_id = rawValue;
+                desc.ref_table = refTable;
+            } else {
+                desc.render_as = 'text';
+            }
+        }
+
+        return desc;
+
+    } catch (err) {
+        this._log('error', ctx, 'Exception describing variable "' + varName + '": ' + err);
+        return null;
+    }
+},
+
+_getReferenceVariableTargetTable: function (rec, varName) {
+    try {
+        var def = new GlideRecord('item_option_new');
+        def.addQuery('cat_item', rec.getValue('cat_item'));
+        def.addQuery('name', varName);
+        def.setLimit(1);
+        def.query();
+        if (def.next()) {
+            return def.getValue('reference') + '';
+        }
+
+        var defSet = new GlideRecord('item_option_new');
+        defSet.addQuery('name', varName);
+        defSet.addNotNullQuery('variable_set');
+        defSet.setLimit(1);
+        defSet.query();
+        if (defSet.next()) {
+            return defSet.getValue('reference') + '';
+        }
+    } catch (err) {
+        // non-fatal
+    }
+    return null;
+},
+
+_deriveVariableRenderAs: function (typeCode) {
+    switch (typeCode + '') {
+        case '9':
+        case '10':
+            return 'date';
+        case '8':
+            return 'link';
+        case '1':
+        case '3':
+        case '5':
+        case '7':
+        case '24':
+        case '25':
+            return 'badge';
+        default:
+            return 'text';
+    }
+},
+
+_isLayoutVariableType: function (typeCode) {
+    var layoutTypes = { '11': 1, '17': 1, '18': 1, '19': 1, '21': 1, '22': 1, '31': 1 };
+    return !!layoutTypes[typeCode + ''];
+},
+
+_isHtmlVariableType: function (typeCode) {
+    var htmlTypes = { '16': 1, '26': 1 };
+    return !!htmlTypes[typeCode + ''];
+},
+
+_targetExtendsTask: function (targetTable) {
+    var ctx = '_targetExtendsTask';
+    if (!targetTable) return false;
+
+    if (this._taskExtensionCache.hasOwnProperty(targetTable)) {
+        return this._taskExtensionCache[targetTable];
+    }
+
+    var result = false;
+    if (targetTable === 'task') {
+        result = true;
+    } else {
         try {
-            if (!fieldDef || !fieldDef.field_name) {
-                this._log('warn', ctx, 'Invalid fieldDef: ' + JSON.stringify(fieldDef));
-                return null;
-            }
-
-            var element = rec.getElement(fieldDef.field_name);
-            if (!element) {
-                this._log('warn', ctx, 'Field "' + fieldDef.field_name +
-                    '" does not exist on table "' + rec.getTableName() + '" — skipping');
-                return null;
-            }
-
-            var ed = element.getED();
-            var type = ed.getInternalType() + '';
-            var label = fieldDef.label_override || (ed.getLabel() + '');
-            var value = rec.getValue(fieldDef.field_name);
-            var displayValue = rec.getDisplayValue(fieldDef.field_name);
-
-            var desc = {
-                name: fieldDef.field_name,
-                label: label,
-                type: type,
-                value: value,
-                display_value: displayValue,
-                render_as: this._deriveRenderAs(type)
-            };
-
-            // Reference fields — only link if the target extends task.
-            if (type === 'reference') {
-                var refTable = ed.getReference() + '';
-                if (this._targetExtendsTask(refTable)) {
-                    desc.ref_sys_id = value;
-                    desc.ref_table = refTable;
-                    this._log('debug', ctx, 'Reference field "' + fieldDef.field_name +
-                        '" → task-based table "' + refTable + '" — linking');
-                } else {
-                    desc.render_as = 'text';
-                    this._log('debug', ctx, 'Reference field "' + fieldDef.field_name +
-                        '" → non-task table "' + refTable + '" — rendering as text');
-                }
-            }
-
-            return desc;
-
+            var tu = new TableUtils(targetTable);
+            var parents = tu.getTables() || [];
+            result = parents.indexOf('task') !== -1;
         } catch (err) {
-            this._log('error', ctx, 'Exception describing field "' +
-                (fieldDef ? fieldDef.field_name : 'unknown') + '": ' + err +
-                ' | stack: ' + (err.stack || 'no stack'));
+            this._log('warn', ctx, 'TableUtils failed for "' + targetTable + '": ' + err);
+            result = false;
+        }
+    }
+
+    this._taskExtensionCache[targetTable] = result;
+    return result;
+},
+
+_describeField: function (rec, fieldDef) {
+    var ctx = '_describeField';
+
+    try {
+        if (!fieldDef || !fieldDef.field_name) {
+            this._log('warn', ctx, 'Invalid fieldDef: ' + JSON.stringify(fieldDef));
             return null;
         }
-    },
 
-    /**
-     * Pure mapping from dictionary internal type → render mode.
-     */
-    _deriveRenderAs: function (type) {
-        switch (type) {
-            case 'glide_date_time':
-            case 'glide_date':
-            case 'due_date':
-                return 'date';
-            case 'reference':
-                return 'link';
-            case 'boolean':
-            case 'choice':
-                return 'badge';
-            case 'html':
-            case 'translated_html':
-            case 'journal':
-            case 'journal_input':
-                return 'html';
-            case 'currency':
-            case 'price':
-                return 'text';
-            case 'url':
-                return 'external_link';
-            default:
-                return 'text';
+        var element = rec.getElement(fieldDef.field_name);
+        if (!element) {
+            this._log('warn', ctx, 'Field "' + fieldDef.field_name +
+                '" does not exist on table "' + rec.getTableName() + '" — skipping');
+            return null;
         }
-    },
 
-    /**
-     * Fallback when no config exists — introspects the dictionary to pick fields per section.
-     */
-    _getDefaultFields: function (rec, section) {
-        var ctx = '_getDefaultFields[' + section + ']';
+        var ed = element.getED();
+        var type = ed.getInternalType() + '';
+        var label = fieldDef.label_override || (ed.getLabel() + '');
+        var value = rec.getValue(fieldDef.field_name);
+        var displayValue = rec.getDisplayValue(fieldDef.field_name);
 
-        try {
-            if (section === 'header') {
-                var candidates = [
-                    this._pickFirstExistingField(rec, ['number', 'name']),
-                    this._pickFirstExistingField(rec, ['opened_by', 'caller_id', 'requested_for', 'requested_by']),
-                    'state',
-                    'priority',
-                    'sys_updated_on',
-                    'sys_created_on'
-                ];
-                var picked = candidates
-                    .filter(function (f) { return f && rec.getElement(f); })
-                    .slice(0, 6)
-                    .map(function (name) { return { field_name: name }; });
+        var desc = {
+            name: fieldDef.field_name,
+            label: label,
+            type: type,
+            value: value,
+            display_value: displayValue,
+            render_as: this._deriveRenderAs(type)
+        };
 
-                this._log('debug', ctx, 'Picked ' + picked.length + ' header fields: ' +
-                    JSON.stringify(picked));
-                return picked;
-            }
-
-            if (section === 'primary') {
-                var primary = ['short_description', 'description']
-                    .filter(function (f) { return rec.getElement(f); })
-                    .map(function (name) { return { field_name: name }; });
-
-                this._log('debug', ctx, 'Picked ' + primary.length + ' primary fields: ' +
-                    JSON.stringify(primary));
-                return primary;
-            }
-
-            if (section === 'details') {
-                var excluded = {
-                    number: 1, name: 1, opened_by: 1, caller_id: 1, requested_for: 1, requested_by: 1,
-                    state: 1, priority: 1, sys_updated_on: 1, sys_created_on: 1,
-                    short_description: 1, description: 1
-                };
-                var skipTypes = {
-                    'collection': 1, 'password2': 1, 'password': 1,
-                    'script': 1, 'script_plain': 1, 'xml': 1
-                };
-
-                var fields = [];
-                var elements = rec.getElements();
-                for (var i = 0; i < elements.size(); i++) {
-                    var el = elements.get(i);
-                    var name = el.getName() + '';
-                    if (excluded[name]) continue;
-                    if (name.indexOf('sys_') === 0 && name !== 'sys_id') continue;
-
-                    var ed = el.getED();
-                    var type = ed.getInternalType() + '';
-                    if (skipTypes[type]) continue;
-
-                    var value = rec.getValue(name);
-                    if (value === null || value === '' || value === undefined) continue;
-
-                    fields.push({ field_name: name, _label: ed.getLabel() + '' });
-                }
-
-                fields.sort(function (a, b) { return a._label.localeCompare(b._label); });
-                var trimmed = fields.slice(0, 20).map(function (f) {
-                    return { field_name: f.field_name };
-                });
-
-                this._log('debug', ctx, 'Picked ' + trimmed.length + ' details fields (from ' +
-                    fields.length + ' candidates): ' + JSON.stringify(trimmed));
-                return trimmed;
-            }
-
-            this._log('warn', ctx, 'Unknown section — returning empty');
-            return [];
-
-        } catch (err) {
-            this._log('error', ctx, 'Exception: ' + err +
-                ' | stack: ' + (err.stack || 'no stack'));
-            return [];
+        // Flag boolean fields so the template can color the badge green/red.
+        // boolean_state is normalized to 'true' or 'false' strings.
+        if (type === 'boolean') {
+            desc.is_boolean = true;
+            desc.boolean_state = (value + '' === 'true' || value + '' === '1') ? 'true' : 'false';
         }
-    },
 
-    _pickFirstExistingField: function (rec, candidates) {
-        for (var i = 0; i < candidates.length; i++) {
-            if (rec.getElement(candidates[i])) return candidates[i];
+        if (type === 'reference') {
+            var refTable = ed.getReference() + '';
+            if (this._targetExtendsTask(refTable)) {
+                desc.ref_sys_id = value;
+                desc.ref_table = refTable;
+            } else {
+                desc.render_as = 'text';
+            }
         }
+
+        return desc;
+
+    } catch (err) {
+        this._log('error', ctx, 'Exception describing field "' +
+            (fieldDef ? fieldDef.field_name : 'unknown') + '": ' + err);
         return null;
-    },
+    }
+},
 
-    // ── Logging helper ──────────────────────────────────────────────────────
+_deriveRenderAs: function (type) {
+    switch (type) {
+        case 'glide_date_time':
+        case 'glide_date':
+        case 'due_date':
+            return 'date';
+        case 'reference':
+            return 'link';
+        case 'boolean':
+        case 'choice':
+            return 'badge';
+        case 'html':
+        case 'translated_html':
+        case 'journal':
+        case 'journal_input':
+            return 'html';
+        case 'currency':
+        case 'price':
+            return 'text';
+        case 'url':
+            return 'external_link';
+        default:
+            return 'text';
+    }
+},
 
-    /**
-     * Centralized logger. Routes to gs.info/warn/error based on level.
-     * All messages are prefixed with LOG_PREFIX and the calling context for grep-ability.
-     *
-     * Usage: this._log('info', 'methodName', 'message');
-     */
-    _log: function (level, ctx, message) {
-        var levelOrder = { debug: 0, info: 1, warn: 2, error: 3 };
-        var configured = levelOrder[this.LOG_LEVEL] || 0;
-        var msgLevel = levelOrder[level] || 0;
+_getDefaultFields: function (rec, section) {
+    var ctx = '_getDefaultFields[' + section + ']';
 
-        if (msgLevel < configured) return;
-
-        var fullMsg = '[' + this.LOG_PREFIX + '][' + level.toUpperCase() + '][' + ctx + '] ' + message;
-
-        if (level === 'error') {
-            gs.error(fullMsg);
-        } else if (level === 'warn') {
-            gs.warn(fullMsg);
-        } else {
-            // gs.info handles both 'info' and 'debug'
-            gs.info(fullMsg);
+    try {
+        if (section === 'header') {
+            var candidates = [
+                this._pickFirstExistingField(rec, ['number', 'name']),
+                this._pickFirstExistingField(rec, ['opened_by', 'caller_id', 'requested_for', 'requested_by']),
+                'state',
+                'priority',
+                'sys_updated_on',
+                'sys_created_on'
+            ];
+            return candidates
+                .filter(function (f) { return f && rec.getElement(f); })
+                .slice(0, 6)
+                .map(function (name) { return { field_name: name }; });
         }
-    },
 
-    type: 'GENDynamicRecordViewUtility'
+        if (section === 'primary') {
+            return ['short_description', 'description']
+                .filter(function (f) { return rec.getElement(f); })
+                .map(function (name) { return { field_name: name }; });
+        }
+
+        if (section === 'details') {
+            var excluded = {
+                number: 1, name: 1, opened_by: 1, caller_id: 1, requested_for: 1, requested_by: 1,
+                state: 1, priority: 1, sys_updated_on: 1, sys_created_on: 1,
+                short_description: 1, description: 1
+            };
+            var skipTypes = {
+                'collection': 1, 'password2': 1, 'password': 1,
+                'script': 1, 'script_plain': 1, 'xml': 1
+            };
+
+            var fields = [];
+            var elements = rec.getElements();
+            for (var i = 0; i < elements.size(); i++) {
+                var el = elements.get(i);
+                var name = el.getName() + '';
+                if (excluded[name]) continue;
+                if (name.indexOf('sys_') === 0 && name !== 'sys_id') continue;
+
+                var ed = el.getED();
+                var type = ed.getInternalType() + '';
+                if (skipTypes[type]) continue;
+
+                var value = rec.getValue(name);
+                if (value === null || value === '' || value === undefined) continue;
+
+                fields.push({ field_name: name, _label: ed.getLabel() + '' });
+            }
+
+            fields.sort(function (a, b) { return a._label.localeCompare(b._label); });
+            return fields.slice(0, 20).map(function (f) {
+                return { field_name: f.field_name };
+            });
+        }
+
+        return [];
+
+    } catch (err) {
+        this._log('error', ctx, 'Exception: ' + err);
+        return [];
+    }
+},
+
+_pickFirstExistingField: function (rec, candidates) {
+    for (var i = 0; i < candidates.length; i++) {
+        if (rec.getElement(candidates[i])) return candidates[i];
+    }
+    return null;
+},
+
+// ── Logging ─────────────────────────────────────────────────────────────
+
+_log: function (level, ctx, message) {
+    var levelOrder = { debug: 0, info: 1, warn: 2, error: 3 };
+    var configured = levelOrder[this.LOG_LEVEL] || 0;
+    var msgLevel = levelOrder[level] || 0;
+
+    if (msgLevel < configured) return;
+
+    var fullMsg = '[' + this.LOG_PREFIX + '][' + level.toUpperCase() + '][' + ctx + '] ' + message;
+
+    if (level === 'error') {
+        gs.error(fullMsg);
+    } else if (level === 'warn') {
+        gs.warn(fullMsg);
+    } else {
+        gs.info(fullMsg);
+    }
+},
+
+type: 'GENDynamicRecordViewUtility'
 };
 
 ```
@@ -921,61 +1167,67 @@ data.hasVariables = data.variables.length > 0;
 ```html
 <!-- More Details expander -->
 <div ng-if="data.hasDetails || data.hasVariables" class="details-section">
-  <a ng-click="showDetails = !showDetails" class="title-medium more-details-toggle">
-    {{showDetails ? 'Less Details' : 'More Details'}}
-    <i class="fa" ng-class="{'fa-angle-down': !showDetails, 'fa-angle-up': showDetails}"></i>
-  </a>
+<a ng-click="showDetails = !showDetails" class="title-medium more-details-toggle">
+{{showDetails ? 'Less Details' : 'More Details'}}
+<i class="fa" ng-class="{'fa-angle-down': !showDetails, 'fa-angle-up': showDetails}"></i>
+</a>
 
-  <div ng-if="showDetails">
+<div ng-if="showDetails">
 
-    <!-- Existing details grid -->
-    <div ng-if="data.hasDetails" class="details-grid">
-      <div class="details-cell field-block"
-           ng-repeat="f in data.sections.details track by f.name">
-        <div class="title-medium field-label">{{f.label}}:</div>
-        <div class="body-large field-value">
-          <!-- ... existing ng-switch block ... -->
-        </div>
-      </div>
+<!-- Existing details grid -->
+<div ng-if="data.hasDetails" class="details-grid">
+  <div class="details-cell field-block"
+       ng-repeat="f in data.sections.details track by f.name">
+    <div class="title-medium field-label">{{f.label}}:</div>
+    <div class="body-large field-value">
+      <!-- ... existing ng-switch block ... -->
     </div>
-
-    <!-- Variables sub-section, only for RITMs -->
-    <div ng-if="data.hasVariables" class="variables-subsection">
-      <h5 class="title-medium variables-heading">Variables</h5>
-      <div class="details-grid">
-        <div class="details-cell field-block"
-             ng-repeat="v in data.variables track by v.name">
-          <div class="title-medium field-label">{{v.label}}:</div>
-          <div class="body-large field-value">
-            <!-- same ng-switch block, with `v` instead of `f` -->
-            <span ng-switch="v.render_as">
-              <span ng-switch-when="link">
-                <a ng-if="v.ref_sys_id" ng-href="/sp?id=record-view&table={{v.ref_table}}&sys_id={{v.ref_sys_id}}">{{v.display_value}}</a>
-                <span ng-if="!v.ref_sys_id">{{v.display_value || '—'}}</span>
-              </span>
-              <span ng-switch-when="badge"><span class="label label-default">{{v.display_value || '—'}}</span></span>
-              <span ng-switch-when="date"><span title="{{v.value}}">{{v.display_value || 'N/A'}}</span></span>
-              <span ng-switch-default>{{v.display_value || v.value || '—'}}</span>
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-
   </div>
+</div>
+
+<!-- Variables sub-section, only for RITMs -->
+<div ng-if="data.hasVariables" class="variables-subsection">
+  <h5 class="title-medium variables-heading">Variables</h5>
+  <div class="details-grid">
+    <div class="details-cell field-block"
+         ng-repeat="v in data.variables track by v.name">
+      <div class="title-medium field-label">{{v.label}}:</div>
+      <div class="body-large field-value">
+        <!-- same ng-switch block, with `v` instead of `f` -->
+        <span ng-switch="v.render_as">
+          <span ng-switch-when="link">
+            <a ng-if="v.ref_sys_id" ng-href="/sp?id=record-view&table={{v.ref_table}}&sys_id={{v.ref_sys_id}}">{{v.display_value}}</a>
+            <span ng-if="!v.ref_sys_id">{{v.display_value || '—'}}</span>
+          </span>
+<span ng-switch-when="badge">
+<span class="record-view-badge"
+    ng-class="{
+      'badge-true': f.is_boolean && f.boolean_state === 'true',
+      'badge-false': f.is_boolean && f.boolean_state === 'false',
+      'badge-default': !f.is_boolean
+    }">{{f.display_value || '—'}}</span>
+</span>              <span ng-switch-when="date"><span title="{{v.value}}">{{v.display_value || 'N/A'}}</span></span>
+          <span ng-switch-default>{{v.display_value || v.value || '—'}}</span>
+        </span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
 </div>
 ```
 
 ```scss
 .variables-subsection {
-  margin-top: var(--field-gap);
-  padding-top: var(--field-gap);
-  border-top: 1px solid #eee;
+margin-top: var(--field-gap);
+padding-top: var(--field-gap);
+border-top: 1px solid #eee;
 
-  .variables-heading {
-    margin: 0 0 var(--field-gap) 0;
-    color: $Neutral-700;
-  }
+.variables-heading {
+margin: 0 0 var(--field-gap) 0;
+color: $Neutral-700;
+}
 }
 ```
 
@@ -987,15 +1239,15 @@ var sysId = $sp.getParameter('sys_id') || options.sys_id;
 
 data.error = null;
 if (!table || !sysId) {
-  data.error = 'Missing table or sys_id';
-  return;
+data.error = 'Missing table or sys_id';
+return;
 }
 
 // 2. Security check — does this user have read access on this record?
 var rec = new GlideRecordSecure(table);
 if (!rec.get(sysId)) {
-  data.error = 'Record not found or access denied';
-  return;
+data.error = 'Record not found or access denied';
+return;
 }
 
 // 3. Load config
@@ -1006,9 +1258,9 @@ data.table = table;
 data.sys_id = sysId;
 data.title = buildTitle(rec, config);
 data.sections = {
-  header:  buildSection(rec, config, 'header'),
-  primary: buildSection(rec, config, 'primary'),
-  details: buildSection(rec, config, 'details')
+header:  buildSection(rec, config, 'header'),
+primary: buildSection(rec, config, 'primary'),
+details: buildSection(rec, config, 'details')
 };
 data.hasDetails = data.sections.details.length > 0;
 })();
@@ -1022,10 +1274,10 @@ gr.query();
 if (!gr.next()) return null;
 
 var cfg = {
-  sys_id: gr.getUniqueValue(),
-  title_field: gr.getValue('title_field'),
-  title_template: gr.getValue('title_template'),
-  fields: { header: [], primary: [], details: [] }
+sys_id: gr.getUniqueValue(),
+title_field: gr.getValue('title_field'),
+title_template: gr.getValue('title_template'),
+fields: { header: [], primary: [], details: [] }
 };
 
 var fg = new GlideRecord('x_gensync_record_view_field');
@@ -1034,12 +1286,12 @@ fg.orderBy('section');
 fg.orderBy('order');
 fg.query();
 while (fg.next()) {
-  var section = fg.getValue('section');
-  if (!cfg.fields[section]) continue;
-  cfg.fields[section].push({
-    field_name: fg.getValue('field_name'),
-    label_override: fg.getValue('label_override')
-  });
+var section = fg.getValue('section');
+if (!cfg.fields[section]) continue;
+cfg.fields[section].push({
+field_name: fg.getValue('field_name'),
+label_override: fg.getValue('label_override')
+});
 }
 return cfg;
 }
@@ -1047,7 +1299,7 @@ return cfg;
 function buildSection(rec, config, section) {
 var fields = (config && config.fields[section]) || getDefaultFields(rec, section);
 return fields.map(function(f) {
-  return describeField(rec, f);
+return describeField(rec, f);
 }).filter(function(d) { return d !== null; });
 }
 
@@ -1058,15 +1310,15 @@ var _taskExtensionCache = {};
 function targetExtendsTask(targetTable) {
 if (!targetTable) return false;
 if (_taskExtensionCache.hasOwnProperty(targetTable)) {
-  return _taskExtensionCache[targetTable];
+return _taskExtensionCache[targetTable];
 }
 var result = false;
 if (targetTable === 'task') {
-  result = true;
+result = true;
 } else {
-  var tu = new TableUtils(targetTable);
-  var parents = tu.getTables() || [];
-  result = parents.indexOf('task') !== -1;
+var tu = new TableUtils(targetTable);
+var parents = tu.getTables() || [];
+result = parents.indexOf('task') !== -1;
 }
 _taskExtensionCache[targetTable] = result;
 return result;
@@ -1083,24 +1335,24 @@ var value = rec.getValue(fieldDef.field_name);
 var displayValue = rec.getDisplayValue(fieldDef.field_name);
 
 var desc = {
-  name: fieldDef.field_name,
-  label: label,
-  type: type,
-  value: value,
-  display_value: displayValue,
-  render_as: deriveRenderAs(type)  // derived from dictionary type, not configured
+name: fieldDef.field_name,
+label: label,
+type: type,
+value: value,
+display_value: displayValue,
+render_as: deriveRenderAs(type)  // derived from dictionary type, not configured
 };
 
 // Reference fields — only link if the target extends task.
 // Non-task references (sys_user, sys_user_group, cmdb_ci, etc.) render as plain text.
 if (type === 'reference') {
-  var refTable = ed.getReference();
-  if (targetExtendsTask(refTable)) {
-    desc.ref_sys_id = value;
-    desc.ref_table = refTable;
-  } else {
-    desc.render_as = 'text';  // override — render reference display value as plain text
-  }
+var refTable = ed.getReference();
+if (targetExtendsTask(refTable)) {
+desc.ref_sys_id = value;
+desc.ref_table = refTable;
+} else {
+desc.render_as = 'text';  // override — render reference display value as plain text
+}
 }
 
 return desc;
@@ -1110,28 +1362,28 @@ function deriveRenderAs(type) {
 // Pure function: dictionary internal type → render strategy.
 // Single source of truth for how fields render based on their type.
 switch (type) {
-  case 'glide_date_time':
-  case 'glide_date':
-  case 'due_date':
-    return 'date';
-  case 'reference':
-    return 'link';
-  case 'boolean':
-  case 'choice':
-    // choice renders as a badge so state/priority/etc. get the tag treatment
-    return 'badge';
-  case 'html':
-  case 'translated_html':
-  case 'journal':
-  case 'journal_input':
-    return 'html';
-  case 'currency':
-  case 'price':
-    return 'text';  // display_value already formatted with currency symbol
-  case 'url':
-    return 'external_link';
-  default:
-    return 'text';
+case 'glide_date_time':
+case 'glide_date':
+case 'due_date':
+return 'date';
+case 'reference':
+return 'link';
+case 'boolean':
+case 'choice':
+// choice renders as a badge so state/priority/etc. get the tag treatment
+return 'badge';
+case 'html':
+case 'translated_html':
+case 'journal':
+case 'journal_input':
+return 'html';
+case 'currency':
+case 'price':
+return 'text';  // display_value already formatted with currency symbol
+case 'url':
+return 'external_link';
+default:
+return 'text';
 }
 }
 
@@ -1140,53 +1392,53 @@ function getDefaultFields(rec, section) {
 // Introspects the dictionary and picks sensible fields per section.
 
 if (section === 'header') {
-  var candidates = [
-    pickFirstExistingField(rec, ['number', 'name']),
-    pickFirstExistingField(rec, ['opened_by', 'caller_id', 'requested_for', 'requested_by']),
-    'state',
-    'priority',
-    'sys_updated_on',
-    'sys_created_on'
-  ];
-  return candidates
-    .filter(function(f) { return f && rec.getElement(f); })
-    .slice(0, 6)
-    .map(function(name) { return { field_name: name }; });
+var candidates = [
+pickFirstExistingField(rec, ['number', 'name']),
+pickFirstExistingField(rec, ['opened_by', 'caller_id', 'requested_for', 'requested_by']),
+'state',
+'priority',
+'sys_updated_on',
+'sys_created_on'
+];
+return candidates
+.filter(function(f) { return f && rec.getElement(f); })
+.slice(0, 6)
+.map(function(name) { return { field_name: name }; });
 }
 
 if (section === 'primary') {
-  return ['short_description', 'description']
-    .filter(function(f) { return rec.getElement(f); })
-    .map(function(name) { return { field_name: name }; });
+return ['short_description', 'description']
+.filter(function(f) { return rec.getElement(f); })
+.map(function(name) { return { field_name: name }; });
 }
 
 if (section === 'details') {
-  var excluded = {
-    number: 1, name: 1, opened_by: 1, caller_id: 1, requested_for: 1, requested_by: 1,
-    state: 1, priority: 1, sys_updated_on: 1, sys_created_on: 1,
-    short_description: 1, description: 1
-  };
-  var skipTypes = { 'collection': 1, 'password2': 1, 'password': 1, 'script': 1, 'script_plain': 1, 'xml': 1 };
+var excluded = {
+number: 1, name: 1, opened_by: 1, caller_id: 1, requested_for: 1, requested_by: 1,
+state: 1, priority: 1, sys_updated_on: 1, sys_created_on: 1,
+short_description: 1, description: 1
+};
+var skipTypes = { 'collection': 1, 'password2': 1, 'password': 1, 'script': 1, 'script_plain': 1, 'xml': 1 };
 
-  var fields = [];
-  var elements = rec.getElements();
-  for (var i = 0; i < elements.size(); i++) {
-    var el = elements.get(i);
-    var name = el.getName() + '';
-    if (excluded[name]) continue;
-    if (name.indexOf('sys_') === 0 && name !== 'sys_id') continue;
-    var ed = el.getED();
-    var type = ed.getInternalType() + '';
-    if (skipTypes[type]) continue;
+var fields = [];
+var elements = rec.getElements();
+for (var i = 0; i < elements.size(); i++) {
+var el = elements.get(i);
+var name = el.getName() + '';
+if (excluded[name]) continue;
+if (name.indexOf('sys_') === 0 && name !== 'sys_id') continue;
+var ed = el.getED();
+var type = ed.getInternalType() + '';
+if (skipTypes[type]) continue;
 
-    var value = rec.getValue(name);
-    if (value === null || value === '' || value === undefined) continue;
+var value = rec.getValue(name);
+if (value === null || value === '' || value === undefined) continue;
 
-    fields.push({ field_name: name, _label: ed.getLabel() + '' });
-  }
+fields.push({ field_name: name, _label: ed.getLabel() + '' });
+}
 
-  fields.sort(function(a, b) { return a._label.localeCompare(b._label); });
-  return fields.slice(0, 20).map(function(f) { return { field_name: f.field_name }; });
+fields.sort(function(a, b) { return a._label.localeCompare(b._label); });
+return fields.slice(0, 20).map(function(f) { return { field_name: f.field_name }; });
 }
 
 return [];
@@ -1194,27 +1446,27 @@ return [];
 
 function pickFirstExistingField(rec, candidates) {
 for (var i = 0; i < candidates.length; i++) {
-  if (rec.getElement(candidates[i])) return candidates[i];
+if (rec.getElement(candidates[i])) return candidates[i];
 }
 return null;
 }
 
 function buildTitle(rec, config) {
 if (config && config.title_template) {
-  return substituteTemplate(config.title_template, rec);
+return substituteTemplate(config.title_template, rec);
 }
 if (config && config.title_field) {
-  return rec.getDisplayValue(config.title_field);
+return rec.getDisplayValue(config.title_field);
 }
 return rec.getDisplayValue('number') ||
-       rec.getDisplayValue('name') ||
-       rec.getDisplayValue() ||
-       'Record';
+   rec.getDisplayValue('name') ||
+   rec.getDisplayValue() ||
+   'Record';
 }
 
 function substituteTemplate(template, rec) {
 return template.replace(/\$\{(\w+)\}/g, function(_, fieldName) {
-  return rec.getDisplayValue(fieldName) || '';
+return rec.getDisplayValue(fieldName) || '';
 });
 }
 ```
@@ -1273,95 +1525,109 @@ Typography uses **predefined utility classes** that already exist in the portal 
 <div class="record-view">
 <!-- Title bar -->
 <div class="record-view-header">
-  <h1 class="record-view-title">{{data.title}}</h1>
+<h1 class="record-view-title">{{data.title}}</h1>
 </div>
 
 <!-- Error state -->
 <div class="panel panel-danger" ng-if="data.error">
-  <div class="panel-body">{{data.error}}</div>
+<div class="panel-body">{{data.error}}</div>
 </div>
 
 <!-- Main white card -->
 <div class="record-view-card" ng-if="!data.error">
-  <h4 class="title-extra-large">Details</h4>
+<h4 class="title-extra-large">Details</h4>
 
-  <!-- Header section -->
-  <div class="header-row">
-    <div class="header-cell field-block"
-         ng-repeat="f in data.sections.header track by f.name">
-      <div class="title-medium field-label">{{f.label}}:</div>
-      <div class="body-large field-value">
-        <span ng-switch="f.render_as">
-          <span ng-switch-when="link">
-            <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
-            <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
-          </span>
-          <span ng-switch-when="external_link">
-            <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
-            <span ng-if="!f.value">—</span>
-          </span>
-          <span ng-switch-when="badge"><span class="label label-default">{{f.display_value || '—'}}</span></span>
-          <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
-          <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
-          <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
+<!-- Header section -->
+<div class="header-row">
+<div class="header-cell field-block"
+     ng-repeat="f in data.sections.header track by f.name">
+  <div class="title-medium field-label">{{f.label}}:</div>
+  <div class="body-large field-value">
+    <span ng-switch="f.render_as">
+      <span ng-switch-when="link">
+        <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
+        <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
+      </span>
+      <span ng-switch-when="external_link">
+        <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
+        <span ng-if="!f.value">—</span>
+      </span>
+      <span ng-switch-when="badge">
+        <span class="record-view-badge"
+              ng-class="{
+                'badge-true': f.is_boolean && f.boolean_state === 'true',
+                'badge-false': f.is_boolean && f.boolean_state === 'false',
+                'badge-default': !f.is_boolean
+              }">{{f.display_value || '—'}}</span>
+      </span>
+      <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
+      <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
+      <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
+    </span>
+  </div>
+</div>
+</div>
+
+<!-- Primary section -->
+<div class="primary-section">
+<div class="field-block"
+     ng-repeat="f in data.sections.primary track by f.name">
+  <div class="title-medium field-label">{{f.label}}:</div>
+  <div class="body-large field-value primary-value">
+    <span ng-switch="f.render_as">
+      <span ng-switch-when="link">
+        <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
+        <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
+      </span>
+      <span ng-switch-when="external_link">
+        <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
+        <span ng-if="!f.value">—</span>
+      </span>
+      <span ng-switch-when="badge">
+        <span class="record-view-badge"
+              ng-class="{
+                'badge-true': f.is_boolean && f.boolean_state === 'true',
+                'badge-false': f.is_boolean && f.boolean_state === 'false',
+                'badge-default': !f.is_boolean
+              }">{{f.display_value || '—'}}</span>
+      </span>
+      <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
+      <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
+      <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
+    </span>
+  </div>
+</div>
+</div>
+
+<!-- More Details expander -->
+<div ng-if="data.hasDetails" class="details-section">
+<a ng-click="showDetails = !showDetails" class="title-medium more-details-toggle">
+  {{showDetails ? 'Less Details' : 'More Details'}}
+  <i class="fa" ng-class="{'fa-angle-down': !showDetails, 'fa-angle-up': showDetails}"></i>
+</a>
+<div ng-if="showDetails" class="details-grid">
+  <div class="details-cell field-block"
+       ng-repeat="f in data.sections.details track by f.name">
+    <div class="title-medium field-label">{{f.label}}:</div>
+    <div class="body-large field-value">
+      <span ng-switch="f.render_as">
+        <span ng-switch-when="link">
+          <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
+          <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
         </span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Primary section -->
-  <div class="primary-section">
-    <div class="field-block"
-         ng-repeat="f in data.sections.primary track by f.name">
-      <div class="title-medium field-label">{{f.label}}:</div>
-      <div class="body-large field-value primary-value">
-        <span ng-switch="f.render_as">
-          <span ng-switch-when="link">
-            <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
-            <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
-          </span>
-          <span ng-switch-when="external_link">
-            <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
-            <span ng-if="!f.value">—</span>
-          </span>
-          <span ng-switch-when="badge"><span class="label label-default">{{f.display_value || '—'}}</span></span>
-          <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
-          <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
-          <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
+        <span ng-switch-when="external_link">
+          <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
+          <span ng-if="!f.value">—</span>
         </span>
-      </div>
+        <span ng-switch-when="badge"><span class="label label-default">{{f.display_value || '—'}}</span></span>
+        <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
+        <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
+        <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
+      </span>
     </div>
   </div>
-
-  <!-- More Details expander -->
-  <div ng-if="data.hasDetails" class="details-section">
-    <a ng-click="showDetails = !showDetails" class="title-medium more-details-toggle">
-      {{showDetails ? 'Less Details' : 'More Details'}}
-      <i class="fa" ng-class="{'fa-angle-down': !showDetails, 'fa-angle-up': showDetails}"></i>
-    </a>
-    <div ng-if="showDetails" class="details-grid">
-      <div class="details-cell field-block"
-           ng-repeat="f in data.sections.details track by f.name">
-        <div class="title-medium field-label">{{f.label}}:</div>
-        <div class="body-large field-value">
-          <span ng-switch="f.render_as">
-            <span ng-switch-when="link">
-              <a ng-if="f.ref_sys_id" ng-href="/sp?id=record-view&table={{f.ref_table}}&sys_id={{f.ref_sys_id}}">{{f.display_value}}</a>
-              <span ng-if="!f.ref_sys_id">{{f.display_value || '—'}}</span>
-            </span>
-            <span ng-switch-when="external_link">
-              <a ng-if="f.value" ng-href="{{f.value}}" target="_blank" rel="noopener">{{f.display_value || f.value}} <i class="fa fa-external-link"></i></a>
-              <span ng-if="!f.value">—</span>
-            </span>
-            <span ng-switch-when="badge"><span class="label label-default">{{f.display_value || '—'}}</span></span>
-            <span ng-switch-when="date"><span title="{{f.value}}">{{f.display_value || 'N/A'}}</span></span>
-            <span ng-switch-when="html" ng-bind-html="f.safe_html"></span>
-            <span ng-switch-default>{{f.display_value || f.value || '—'}}</span>
-          </span>
-        </div>
-      </div>
-    </div>
-  </div>
+</div>
+</div>
 </div>
 </div>
 ```
@@ -1384,13 +1650,13 @@ $scope.showDetails = false;
 
 // Trust HTML fields so ng-bind-html can render them
 if ($scope.data.sections) {
-  ['header', 'primary', 'details'].forEach(function(section) {
-    ($scope.data.sections[section] || []).forEach(function(f) {
-      if (f.render_as === 'html' && f.value) {
-        f.safe_html = $sce.trustAsHtml(f.value);
-      }
-    });
-  });
+['header', 'primary', 'details'].forEach(function(section) {
+($scope.data.sections[section] || []).forEach(function(f) {
+  if (f.render_as === 'html' && f.value) {
+    f.safe_html = $sce.trustAsHtml(f.value);
+  }
+});
+});
 }
 };
 ```
@@ -1416,106 +1682,120 @@ gap: 16px;
 
 // ── Title bar: white text on hero band, no back link ────────────────────
 .record-view-header {
-  background: #2b5f8a;
-  padding: 32px 40px;
-  border-radius: 8px;
+background: #2b5f8a;
+padding: 32px 40px;
+border-radius: 8px;
 }
 
 .record-view-title {
-  margin: 0;
-  color: #fff;             // record name is white per spec
-  font-weight: 300;
-  font-size: 32px;
-  line-height: 1.2;
+margin: 0;
+color: #fff;             // record name is white per spec
+font-weight: 300;
+font-size: 32px;
+line-height: 1.2;
 }
 
 // ── Main white card ─────────────────────────────────────────────────────
 .record-view-card {
-  background: #fff;
-  border-radius: 8px;
-  padding: 32px 40px 40px 40px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--section-gap);
+background: #fff;
+border-radius: 8px;
+padding: 32px 40px 40px 40px;
+display: flex;
+flex-direction: column;
+gap: var(--section-gap);
 
-  // "Details" heading uses theme utility class .title-extra-large for typography;
-  // we only manage spacing here.
-  .title-extra-large {
-    margin: 0;
-  }
+// "Details" heading uses theme utility class .title-extra-large for typography;
+// we only manage spacing here.
+.title-extra-large {
+margin: 0;
+}
+}
+
+.record-view-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  line-height: 1.4;
+
+  &.badge-true    { background-color: #2e7d32; }  // green
+  &.badge-false   { background-color: #c62828; }  // red
+  &.badge-default { background-color: #1976d2; }  // blue
 }
 
 // ── Shared atom: a label + its value, vertically stacked ────────────────
 // Same gap is used in every section so label→value spacing is identical
 // whether the field is in the header row, primary, or details grid.
 .field-block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--label-value-gap);
-  min-width: 0;  // lets long values truncate/wrap inside a flex parent
+display: flex;
+flex-direction: column;
+gap: var(--label-value-gap);
+min-width: 0;  // lets long values truncate/wrap inside a flex parent
 }
 
 .field-label {
-  // Typography comes from .title-medium utility class.
-  // Only layout-adjacent overrides go here.
-  color: #555;
+// Typography comes from .title-medium utility class.
+// Only layout-adjacent overrides go here.
+color: #555;
 }
 
 .field-value {
-  // Typography comes from .body-large utility class.
-  color: #333;
-  word-break: break-word;
+// Typography comes from .body-large utility class.
+color: #333;
+word-break: break-word;
 }
 
 // ── Header section: flex row of compact fields, wraps on narrow ─────────
 .header-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--field-gap);
+display: flex;
+flex-wrap: wrap;
+gap: var(--field-gap);
 
-  .header-cell {
-    flex: 1 1 140px;   // grow/shrink, ~140px min — gives ~6 across at desktop
-  }
+.header-cell {
+flex: 1 1 140px;   // grow/shrink, ~140px min — gives ~6 across at desktop
+}
 }
 
 // ── Primary section: full-width stacked fields ──────────────────────────
 .primary-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--field-gap);
+display: flex;
+flex-direction: column;
+gap: var(--field-gap);
 
-  .primary-value {
-    white-space: pre-wrap;  // preserve line breaks in long descriptions
-  }
+.primary-value {
+white-space: pre-wrap;  // preserve line breaks in long descriptions
+}
 }
 
 // ── Details section: 2-column flex grid ─────────────────────────────────
 .details-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--field-gap);
+display: flex;
+flex-direction: column;
+gap: var(--field-gap);
 }
 
 .more-details-toggle {
-  // Typography from .title-medium; layout/affordance handled here.
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  align-self: flex-start;
+// Typography from .title-medium; layout/affordance handled here.
+display: inline-flex;
+align-items: center;
+gap: 6px;
+cursor: pointer;
+align-self: flex-start;
 }
 
 .details-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--field-gap);
-  padding-top: var(--field-gap);
-  border-top: 1px solid #eee;
+display: flex;
+flex-wrap: wrap;
+gap: var(--field-gap);
+padding-top: var(--field-gap);
+border-top: 1px solid #eee;
 
-  .details-cell {
-    flex: 1 1 calc(50% - var(--field-gap));  // 2-up at desktop, full-width on narrow
-    min-width: 0;
-  }
+.details-cell {
+flex: 1 1 calc(50% - var(--field-gap));  // 2-up at desktop, full-width on narrow
+min-width: 0;
+}
 }
 }
 ```
@@ -1577,10 +1857,10 @@ This is also what makes the `link` render mode work for reference fields — cli
 5. **Portal page ID** — `record-view`.
 6. **Reference field linking** — link to the same widget *only when* the reference target extends `task`. Non-task references render as plain text.
 7. **Visual styling** —
- - Title bar: hero band, record name in **white**, no back link.
- - Card: `border-radius: 8px`, `padding: 32px 40px 40px 40px`.
- - Typography: "Details" → `title-extra-large`; all field labels and "More Details" → `title-medium`; all field values → `body-large`.
- - Layout: flexbox throughout. Three spacing tokens (`--label-value-gap`, `--field-gap`, `--section-gap`) control vertical rhythm consistently across all sections.
+- Title bar: hero band, record name in **white**, no back link.
+- Card: `border-radius: 8px`, `padding: 32px 40px 40px 40px`.
+- Typography: "Details" → `title-extra-large`; all field labels and "More Details" → `title-medium`; all field values → `body-large`.
+- Layout: flexbox throughout. Three spacing tokens (`--label-value-gap`, `--field-gap`, `--section-gap`) control vertical rhythm consistently across all sections.
 
 No open questions remaining. Ready to build.
 
