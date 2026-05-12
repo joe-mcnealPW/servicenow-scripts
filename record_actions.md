@@ -6,7 +6,7 @@ This doc contains all the code and schema changes needed to deploy the Record Ac
 
 ## 1. Schema Changes (do these first in the platform UI)
 
-### 1a. New columns on `x_g_dla_dla_connec_record_view_config`
+### 1a. New columns on `x_g_gensync_gensync_connec_record_view_config`
 
 | Field | Type | Notes |
 |---|---|---|
@@ -18,17 +18,17 @@ This doc contains all the code and schema changes needed to deploy the Record Ac
 
 **Permission logic:** user can cancel if `allow_cancel = true` AND `(role empty OR user has role)` AND `(condition empty OR record matches condition)`. If `allow_cancel = true` but both role and condition are empty, defaults to admin-only.
 
-### 1b. New child table: `x_g_dla_dla_connec_record_view_cancel_action`
+### 1b. New child table: `x_g_gensync_gensync_connec_record_view_cancel_action`
 
 | Field | Type | Notes |
 |---|---|---|
-| `config` | Reference → `x_g_dla_dla_connec_record_view_config` | Parent record |
+| `config` | Reference → `x_g_gensync_gensync_connec_record_view_config` | Parent record |
 | `field_name` | String (80) | Dictionary field on the parent's table to update |
 | `value` | String (255) | New value. Supports `${current_user}`, `${now}`, `${empty}` tokens |
 | `order` | Integer | Execution order |
 | `description` | String (255) | Admin notes |
 
-### 1c. Validation business rule on `x_g_dla_dla_connec_record_view_cancel_action`
+### 1c. Validation business rule on `x_g_gensync_gensync_connec_record_view_cancel_action`
 
 Before Insert / Before Update — validates `field_name` exists on the parent config's table:
 
@@ -38,7 +38,7 @@ Before Insert / Before Update — validates `field_name` exists on the parent co
     var configSysId = current.getValue('config');
     if (!fieldName || !configSysId) return;
 
-    var cfg = new GlideRecord('x_g_dla_dla_connec_record_view_config');
+    var cfg = new GlideRecord('x_g_gensync_gensync_connec_record_view_config');
     if (!cfg.get(configSysId)) {
         gs.addErrorMessage('Invalid config reference');
         current.setAbortAction(true);
@@ -369,7 +369,7 @@ _applyCancelActions: function (rec, config) {
     var applied = 0;
 
     try {
-        var act = new GlideRecord('x_g_dla_dla_connec_record_view_cancel_action');
+        var act = new GlideRecord('x_g_gensync_gensync_connec_record_view_cancel_action');
         act.addQuery('config', config.sys_id);
         act.orderBy('order');
         act.query();
