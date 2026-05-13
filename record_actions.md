@@ -557,29 +557,37 @@ function($scope, spModal, spUtil) {
 
 ```html
 <div class="record-actions" ng-if="!data.error && (data.actions.can_approve || data.actions.can_cancel)">
-    <div class="action-bar">
-        <button ng-if="data.actions.can_approve"
-                class="btn btn-approve"
-                ng-click="c.approve()"
-                ng-disabled="c.processing">
-            <i class="fa fa-check"></i> Approve
-        </button>
+    <div class="actions-card">
+        <h4 class="title-extra-large actions-heading">Actions</h4>
 
-        <button ng-if="data.actions.can_approve"
-                class="btn btn-reject"
-                ng-click="c.reject()"
-                ng-disabled="c.processing">
-            <i class="fa fa-times"></i> Reject
-        </button>
+        <div class="action-stack">
+            <!-- Approve/Reject group -->
+            <button ng-if="data.actions.can_approve"
+                    class="btn btn-approve"
+                    ng-click="c.approve()"
+                    ng-disabled="c.processing">
+                <i class="fa fa-check"></i> Approve
+            </button>
 
-        <span class="action-spacer" ng-if="data.actions.can_approve && data.actions.can_cancel"></span>
+            <button ng-if="data.actions.can_approve"
+                    class="btn btn-reject"
+                    ng-click="c.reject()"
+                    ng-disabled="c.processing">
+                <i class="fa fa-times"></i> Reject
+            </button>
 
-        <button ng-if="data.actions.can_cancel"
-                class="btn btn-cancel"
-                ng-click="c.cancel()"
-                ng-disabled="c.processing">
-            <i class="fa fa-ban"></i> {{data.actions.cancel_label || 'Cancel'}}
-        </button>
+            <!-- Divider only when both groups present -->
+            <hr class="action-divider"
+                ng-if="data.actions.can_approve && data.actions.can_cancel" />
+
+            <!-- Cancel -->
+            <button ng-if="data.actions.can_cancel"
+                    class="btn btn-cancel"
+                    ng-click="c.cancel()"
+                    ng-disabled="c.processing">
+                <i class="fa fa-ban"></i> {{data.actions.cancel_label || 'Cancel'}}
+            </button>
+        </div>
     </div>
 </div>
 ```
@@ -590,18 +598,39 @@ function($scope, spModal, spUtil) {
 .record-actions {
     margin-bottom: 24px;
 
-    .action-bar {
+    .actions-card {
+        background: #fff;
+        border-radius: 8px;
+        padding: 24px 28px 28px 28px;
         display: flex;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .actions-heading {
+        margin: 0;
+        // Typography comes from the .title-extra-large utility class — only layout-adjacent overrides here
+    }
+
+    .action-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .action-divider {
+        margin: 8px 0;
+        border: none;
+        border-top: 1px solid #e5e5e5;
     }
 
     .btn {
         display: inline-flex;
         align-items: center;
+        justify-content: center;
         gap: 6px;
-        padding: 8px 16px;
+        width: 100%;
+        padding: 10px 16px;
         border-radius: 6px;
         border: none;
         font-weight: 500;
@@ -616,24 +645,9 @@ function($scope, spModal, spUtil) {
         &:disabled { opacity: 0.6; cursor: not-allowed; }
     }
 
-    .btn-approve {
-        background-color: #2e7d32;
-        color: #fff;
-    }
-
-    .btn-reject {
-        background-color: #c62828;
-        color: #fff;
-    }
-
-    .btn-cancel {
-        background-color: #757575;
-        color: #fff;
-    }
-
-    .action-spacer {
-        flex: 1;
-    }
+    .btn-approve { background-color: #2e7d32; color: #fff; }
+    .btn-reject  { background-color: #c62828; color: #fff; }
+    .btn-cancel  { background-color: #c62828; color: #fff; }
 }
 ```
 
