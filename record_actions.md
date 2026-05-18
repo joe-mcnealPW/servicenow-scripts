@@ -22,14 +22,14 @@ Two pieces of configuration drive the widget:
  
 **Approval buttons** — no config needed. The widget automatically shows Approve/Reject if the current user has a "Requested" approval row for the record being viewed.
  
-**Cancel button** — configured per table via `x_g_dla_dla_connec_record_view_config`:
+**Cancel button** — configured per table via `x_g_gen_gen_connec_record_view_config`:
  
 - `Allow cancel` — must be true for the Cancel button to ever show
 - `Cancel role` — optional. Role required to see/use Cancel.
 - `Cancel condition` — optional. Encoded query evaluated against the record. Supports the `${current_user}` token.
 - `Cancel button label` — optional. Override the button text.
 - `Cancel confirm message` — optional. Override the confirmation prompt.
-Plus one or more child records on `x_g_dla_dla_connec_record_view_cancel_action`:
+Plus one or more child records on `x_g_gen_gen_connec_record_view_cancel_action`:
 - `Field name` — dictionary field to update
 - `Value` — new value. Supports `${current_user}`, `${now}`, `${empty}` tokens.
 - `Order` — execution order
