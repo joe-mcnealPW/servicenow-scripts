@@ -1,3 +1,40 @@
+# Record Actions Widget — Testing Guide
+ 
+This guide walks you through testing the Record Actions widget end-to-end. It covers the two action types (Approve/Reject, Cancel), the permission rules, the visual presentation, and the error paths.
+ 
+The widget sits on the `record_view` portal page above the Dynamic Record View widget, and shows action buttons based on the current user's relationship to the record being viewed.
+ 
+---
+ 
+## How to view a record
+ 
+```
+/[portal_suffix]?id=record_view&table=<table_name>&sys_id=<record_sys_id>
+```
+ 
+Grab a sys_id from the URL bar of any record opened in the platform UI.
+ 
+---
+ 
+## How actions are configured
+ 
+Two pieces of configuration drive the widget:
+ 
+**Approval buttons** — no config needed. The widget automatically shows Approve/Reject if the current user has a "Requested" approval row for the record being viewed.
+ 
+**Cancel button** — configured per table via `x_g_dla_dla_connec_record_view_config`:
+ 
+- `Allow cancel` — must be true for the Cancel button to ever show
+- `Cancel role` — optional. Role required to see/use Cancel.
+- `Cancel condition` — optional. Encoded query evaluated against the record. Supports the `${current_user}` token.
+- `Cancel button label` — optional. Override the button text.
+- `Cancel confirm message` — optional. Override the confirmation prompt.
+Plus one or more child records on `x_g_dla_dla_connec_record_view_cancel_action`:
+- `Field name` — dictionary field to update
+- `Value` — new value. Supports `${current_user}`, `${now}`, `${empty}` tokens.
+- `Order` — execution order
+**Permission logic:** user can cancel if `Allow cancel = true` AND `(role empty OR user has role)` AND `(condition empty OR record matches condition)`. If both role and condition are empty but Allow cancel is true, defaults to admin-only.
+
 # Record Actions Widget — Implementation
 
 This doc contains all the code and schema changes needed to deploy the Record Actions widget. Organized by where each piece lives in ServiceNow so you can work through it section by section.
