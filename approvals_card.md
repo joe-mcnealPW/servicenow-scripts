@@ -23,7 +23,7 @@ Solution doc for adding a card-based render path to the Approvals tab of the Wor
 
 ### Configuration
 
-1. A new column `requester_field` is added to the existing record-view config table (`x_g_dla_dla_connec_record_view_config`). String, holds the technical name of a field on the parent record's table (e.g. `opened_by`, `requested_for`, `caller_id`).
+1. A new column `requester_field` is added to the existing record-view config table (`x_g_gen_gen_connec_record_view_config`). String, holds the technical name of a field on the parent record's table (e.g. `opened_by`, `requested_for`, `caller_id`).
 2. Requester rendering rule:
    - **Config exists for parent table + `requester_field` is set** → use that field's display value on the parent record.
    - **Config exists for parent table + `requester_field` is empty** → fall back to the parent record's overall display value (`gr.getDisplayValue()`).
@@ -31,7 +31,7 @@ Solution doc for adding a card-based render path to the Approvals tab of the Wor
 
 ### Non-goals
 
-- No changes to `getTableDetails` in `DLACommon`. Approval enrichment is a separate function.
+- No changes to `getTableDetails` in `GENCommon`. Approval enrichment is a separate function.
 - No changes to approve / reject server actions or the modals that drive them.
 - Asset attestation (`sn_itam_common_attestation_asset_m2m`) keeps the existing table view. The card view applies to `sysapproval_approver` only.
 - No batched title resolution. Per-row `resolveTitle` is acceptable for v1; revisit only if performance proves a real problem.
