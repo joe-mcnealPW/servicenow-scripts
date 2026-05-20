@@ -571,8 +571,52 @@ The colors in the pills and action buttons are inline rather than tied to existi
 None outstanding. All clarifications resolved in the design conversation.
 
 
+# Skeleton loading
 
+```javascript
+refreshTab: function(tab) {
+  if (!tab) return;
+  tab.is_refreshing = true;                    // NEW
+  c.server.get({
+    action: "refresh-tab",
+    tab: tab,
+    searchText: c.state.search,
+    limit: c.state.record_limit
+  }).then(function(resp) {
+    tab.details = resp.data.tabDetails;
+    c.handlers.setTabTotalPagesForTab(tab);
+    tab.is_refreshing = false;                 // NEW
+  });
+}
+```
 
+```html
+
+<!-- Skeleton while refreshing -->
+<div ng-if="tab.is_refreshing && tab.table == 'sysapproval_approver'"
+     class="approval-card-grid">
+  <div ng-repeat="i in [].constructor(c.state.record_limit) track by $index"
+       class="approval-card approval-card-skeleton">
+    <div class="skeleton skeleton-text" style="width: 40%; height: 12px;"></div>
+    <div class="skeleton skeleton-text-md" style="width: 90%; height: 16px; margin-top: 8px;"></div>
+    <div class="skeleton skeleton-text" style="width: 60%; height: 12px; margin-top: 8px;"></div>
+  </div>
+</div>
+
+<!-- Real cards once refresh is done -->
+<div ng-if="!tab.is_refreshing && tab.table == 'sysapproval_approver' && tab.details.rows && tab.details.rows.length > 0"
+     class="approval-card-grid">
+  <!-- existing card markup -->
+</div>
+```
+# Auto pull up approval
+```javascript
+
+// After removeRowFromTab:
+var refreshedTab = c.handlers.getTabById(tab_id);
+if (refreshedTab) c.handlers.refreshTab(refreshedTab);
+
+```
 
 # WaaG Approval Card View — Tester Overview
 
