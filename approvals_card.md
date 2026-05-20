@@ -569,3 +569,51 @@ The colors in the pills and action buttons are inline rather than tied to existi
 ## Open questions
 
 None outstanding. All clarifications resolved in the design conversation.
+
+
+
+
+
+# WaaG Approval Card View — Tester Overview
+
+A brief overview of what changed and what to validate.
+
+## What changed
+
+The Work at a Glance widget's Approvals tab now renders as a grid of cards instead of a table. All other tabs (Requests, Incidents, etc.) are unchanged and still render as tables.
+
+Each approval card shows the parent record's number, title, and requester, plus either Approve/Reject buttons (for pending approvals) or a state pill (for approvals that have already been resolved).
+
+A new column `requester_field` has been added to the record-view config table. This is optional — when set, it controls which field on the parent record is shown as the Requester on the card.
+
+## What to validate
+
+Walk through the Approvals tab and confirm:
+
+**The card layout itself** — three cards per row on desktop, dropping to two on smaller screens and one on mobile. Each card shows the parent record's number on top, a bold title below it, and a Requester line if the parent's table has a record-view config.
+
+**The title** — should match what's configured on the parent table's record-view config. If there's no config, the title falls back to the parent's short description, then number, then display value. The card should never render with a blank title.
+
+**The Requester line** — shows when the parent's table has a record-view config. Hides entirely when no config exists. When `requester_field` is set on the config, the line shows that field's value from the parent record. When `requester_field` is empty, it shows the parent record's overall display value.
+
+**Approve / Reject** — clicking Approve or Reject on a pending card should behave exactly as it did in the table view. Same confirmation modal, same rejection-reason prompt, same success message, same outcome on the record.
+
+**State pills** — non-pending approvals (Approved, Rejected, No Longer Required, etc.) should show a colored pill instead of buttons. Approved is green, Rejected is red, anything else is grey.
+
+**Card click** — clicking anywhere on the card body (not the buttons) should open the approval record the same way clicking a row used to. Whether it opens in the backend or on a portal page is controlled by the WaaG record's existing "Open Records in Backend" setting.
+
+**Other tabs unaffected** — Switch to a non-approval tab and confirm it still renders as a table, with all the existing search, filter, sort, export, and pagination behavior intact.
+
+**Pagination** — Card view pages the same way the table view does. Same page selector, same record-limit dropdown.
+
+**Dark mode** — Toggle dark mode and confirm cards re-style appropriately.
+
+## Known issues to ignore during this round
+
+Two issues are known and tracked for follow-up — don't write defects for these:
+
+1. **Pagination flash.** When navigating between pages or changing the record limit, the previous result set briefly flashes before the new page renders. The data is correct once the flash resolves; it's a visual artifact only.
+
+2. **Empty slots after approve/reject.** When an approval is approved or rejected, the card disappears as expected, but the empty slot isn't backfilled from the next page until you manually navigate or refresh. So a page may end up with fewer cards than the configured page size after several actions.
+
+Both are scoped for a follow-up fix.
