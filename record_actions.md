@@ -5,6 +5,38 @@ This guide walks you through testing the Record Actions widget end-to-end. It co
 The widget sits on the `record_view` portal page above the Dynamic Record View widget, and shows action buttons based on the current user's relationship to the record being viewed.
  
 ---
+
+
+## Cancel testing
+
+```javascript
+
+
+var sysId = '<paste record sys_id here>';
+var table = '<paste table name here>';
+
+var u = new GENDynamicRecordViewUtility();
+var rec = new GlideRecord(table);
+rec.get(sysId);
+var config = u.loadConfig(table);
+
+gs.print('=== Config ===');
+gs.print('  allow_cancel: ' + config.allow_cancel);
+gs.print('  cancel_role: ' + (config.cancel_role || '(empty)'));
+gs.print('  cancel_condition: ' + (config.cancel_condition || '(empty)'));
+gs.print('');
+gs.print('=== User ===');
+gs.print('  user sys_id: ' + gs.getUserID());
+gs.print('  isAdmin: ' + gs.hasRole('admin'));
+if (config.cancel_role) {
+    gs.print('  has cancel_role: ' + gs.hasRole(config.cancel_role));
+}
+gs.print('');
+gs.print('=== Result ===');
+var actions = u.getAvailableActions(rec, config);
+gs.print(JSON.stringify(actions, null, 2));
+
+```
  
 ## How to view a record
  
