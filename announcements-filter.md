@@ -52,32 +52,55 @@ but the dropdown never shows.
 > restore after overwrite). Rejected in favor of the simpler server-side
 > approach unless the topic walk proves expensive at scale.
 
-### Issue 2 — Skeleton Flashes Twice on Topic Change (double fetch)
+### Issue 2 — Skeleton Flashes Twice on Topic Change (full widget recompile)
 
 **Symptom:** Changing the dropdown loads correctly (skeleton → data), then a
-couple seconds later flashes the skeleton again and re-renders the same data.
-Does **not** happen on initial page load — only on dropdown change.
+few seconds later flashes the skeleton again and re-renders. Does **not**
+happen on initial page load — only on dropdown change.
 
-**Root cause:** `onTopicChange` did two things that each triggered a reload:
+**Root cause (confirmed via console logs):** The whole controller
+**re-instantiates** ~5 seconds after the change — the `controller init` log
+fires a second time, followed by a fresh initial load. This is not two reload
+paths inside one controller instance; Service Portal is **fully recompiling
+the widget**, tearing down the controller and building a new one.
 
-1. It called `loadAnnouncements()` explicitly (`c.server.get(...)`).
-2. It mutated the URL via `$location.search()`, and Service Portal reacts to
-   the `$location` change by re-resolving the widget on its own.
+The trigger is how the URL was being updated:
 
-Two reload paths → two fetches → two skeleton cycles, with the SP-driven one
-landing a beat behind the explicit call.
+1. Params were written with **three separate** `$location.search(key, val)`
+   calls — three mid-sequence URL mutations, any of which SP can react to.
+2. Each plain `$location.search()` **pushes a new history entry**, which SP
+   interprets as a navigation worth re-resolving the page/widget context
+   (especially `origin_id`, which is an instance sys_id tied to page routing).
 
-**Fix (applied below):** Make the URL the **single source of truth**.
-`onTopicChange` now updates the URL params only — it does **not** call
-`loadAnnouncements()`. A single `$scope.$on('$locationChangeSuccess', ...)`
-watcher is the one and only path that triggers a reload, so each change
-fetches exactly once. The watcher is guarded by an `initialized` flag set
-after the first load, so it doesn't double-fire alongside the constructor's
-initial `loadAnnouncements()` call.
+So the sequence was: explicit `c.server.get()` reload finishes in the current
+controller → SP reacts to the pushed URL change → recompiles the widget →
+fresh controller runs its own initial load (the second skeleton, seconds later).
 
-**Bonus:** because reloads are now URL-driven, browser **back/forward**
-navigation between topic selections also reloads correctly and re-syncs the
-dropdown (via `preselectFromUrl()`) — previously listed as out of scope.
+**Fix (applied below):** Keep the URL as the value carrier (so the server can
+still read `origin_id`/`topic_id`/`scope` via `$sp.getParameter`, and the
+selection stays shareable/refreshable), but change *how* the URL is written so
+SP doesn't see it as a navigation:
+
+1. **Write all params in ONE atomic `$location.search(obj)` call** instead of
+   three — a single URL mutation, one reaction.
+2. **Chain `.replace()`** so the current history entry is modified in place
+   rather than a new one pushed — an in-place edit doesn't read as a route
+   change.
+
+The single `$locationChangeSuccess` watcher then drives one lightweight
+`c.server.get()` reload — no recompile, no double skeleton. The `initialized`
+flag still guards against the watcher firing alongside the constructor's
+initial load.
+
+> If `.replace()` + atomic write still recompiles in your instance, the
+> fallback is to stop carrying values in the URL and pass them through the
+> `get()` payload instead (`c.server.get({action:'loadData', origin_id, ...})`,
+> server reads `input.*`). That eliminates the recompile entirely but gives up
+> shareable URLs — so it's the fallback, not the default.
+
+**Bonus:** because reloads are URL-driven, browser **back/forward** navigation
+between selections reloads content and re-syncs the dropdown via
+`preselectFromUrl()` — previously listed as out of scope.
 
 ---
 
@@ -512,19 +535,41 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
     };
 
     c.onTopicChange = function() {
-        // Update the URL ONLY. The $locationChangeSuccess watcher below is the
-        // single path that triggers a reload. We do NOT call loadAnnouncements()
-        // here — doing both caused a double-fetch (explicit get() + Service
-        // Portal's own reaction to the $location change), which showed as the
-        // skeleton flashing twice on topic change.
-        // Setting a param to null removes it from the URL.
-        $location.search('origin_id', c.selectedTopic.origin_id || null);
-        $location.search('topic_id', c.selectedTopic.topic_id || null);
-        $location.search('scope', c.selectedTopic.scope || null);
+        // Update the URL so the selection is shareable/refreshable (the server
+        // reads origin_id/topic_id/scope via $sp.getParameter on reload).
+        //
+        // Two things here are deliberate to STOP Service Portal from fully
+        // recompiling the widget (which tore down + re-instantiated the whole
+        // controller ~5s after each change):
+        //
+        //   1. Build the entire search object and apply it in ONE
+        //      $location.search(obj) call — not three separate writes. One
+        //      atomic URL mutation = one change for SP to react to, instead of
+        //      three mid-sequence digests it can interpret as navigation.
+        //   2. Chain .replace() so we modify the CURRENT history entry in place
+        //      rather than pushing a new one. A pushed entry reads as a route
+        //      change and is what triggers SP's page re-resolution.
+        //
+        // The $locationChangeSuccess watcher below is the single path that then
+        // triggers the in-place c.server.get() reload — no recompile.
+        var search = $location.search();
+        search.origin_id = c.selectedTopic.origin_id || null;
+        search.topic_id = c.selectedTopic.topic_id || null;
+        search.scope = c.selectedTopic.scope || null;
+
+        // Strip nulls so empty params drop out of the URL entirely
+        Object.keys(search).forEach(function(k) {
+            if (search[k] === null || search[k] === undefined) {
+                delete search[k];
+            }
+        });
+
+        $location.search(search).replace();
     };
 
-    // Single source of truth for reloads. Any URL param change — dropdown
-    // selection OR browser back/forward — runs through here exactly once.
+    // Single source of truth for reloads. A URL param change — dropdown
+    // selection OR browser back/forward — runs through here exactly once and
+    // does a lightweight in-place server fetch (no widget recompile).
     // Guarded so it doesn't double-fire alongside the initial loadAnnouncements()
     // call in the constructor.
     $scope.$on('$locationChangeSuccess', function() {
