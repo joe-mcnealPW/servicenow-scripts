@@ -7,7 +7,9 @@ sits in the top-right of the widget header and offers three modes:
 2. **All Topics** — every announcement across Agency Wide + every topic, deduped, newest first
 3. **Any specific topic** — every topic whose template page hosts an instance of this widget
 
-Selecting an option updates the URL via `$location.search()` (no reload) and re-fetches.
+Selecting an option sends the choice through the `get()` payload to re-fetch
+(no reload), and mirrors it into the address bar via the History API for
+shareable links.
 
 ---
 
@@ -91,20 +93,26 @@ entirely.
    when the caller supplies the value. The All Topics loop already passed
    `topic_id` explicitly via `getContentForWidgetInstance`, so it was
    already URL-independent.
-3. **The URL is updated separately, write-only**, via a single atomic
-   `$location.search(obj).replace()` — purely so the selection is
-   shareable and survives refresh. Because nothing reads it during the
-   reload, a stray SP reaction can't break correctness; `.replace()`
-   (no history push) also minimizes the chance of any reaction at all.
+3. **The address bar is updated separately, write-only**, via the browser
+   **History API** (`window.history.replaceState`) — deliberately *not*
+   Angular's `$location`. On this instance, **any** `$location` write
+   (even `$location.search(obj).replace()`) makes Service Portal recompile
+   the whole widget — confirmed in testing. `history.replaceState` changes
+   the URL without going through Angular's location pipeline, so SP never
+   sees a change event and never recompiles. Fresh loads still read the
+   real URL via `$sp.getParameter`, so shareable/refreshable links work.
 
 Net result: one explicit reload path (`loadAnnouncements(selection)`),
-no `$locationChangeSuccess` watcher, no recompile, no double skeleton.
+no `$location` use at all, no recompile, no double skeleton.
 
-> Why this is better than the earlier "atomic write + replace()" attempt:
-> that version still *depended* on the URL to carry the value to the
-> server, so it was hostage to whether SP recompiled on the `origin_id`
-> change. Moving the value into the payload removes the dependency, so the
-> URL write is now cosmetic and can't affect the fetch.
+> Evolution of this fix: (1) first attempt kept the URL as the value
+> carrier with atomic write + `.replace()` — still recompiled, because SP
+> reacts to the `$location` change regardless. (2) Moving the value into
+> the `get()` payload removed the *fetch's* dependency on the URL, but the
+> leftover `$location` write for shareability **still** recompiled. (3)
+> Final: bypass `$location` entirely for the URL mirror using
+> `history.replaceState`. The fetch is payload-driven; the URL is updated
+> through the raw History API so Angular/SP never reacts.
 
 ---
 
@@ -148,7 +156,7 @@ User picks an option from dropdown / filter panel
   │    └─ c.server.get({ action:'loadData', origin_id, topic_id, scope })
   │       → server reads input.* → no recompile → one skeleton → data
   │
-  └─ $location.search(obj).replace()  ← URL mirror, write-only, for shareable links
+  └─ history.replaceState(...)  ← URL mirror, write-only, bypasses $location (no recompile)
 ```
 
 ---
@@ -471,14 +479,15 @@ to Agency Wide and to a topic (or to multiple topics), it shows once.
 Adds: dropdown state (Agency Wide + All Topics + topics), selection
 handler, and a responsive icon/panel for narrow widths. The selection
 is sent to the server through the **`get()` payload** (not the URL), and
-the URL is updated separately via `$location.search().replace()` purely
-for shareable/refreshable links. Also fixes the missing `$rootScope`
-injection from the existing code.
+the address bar is updated separately via the **browser History API**
+(`history.replaceState`) — deliberately *not* Angular's `$location`,
+because any `$location` write recompiles the widget on this instance.
+Also fixes the missing `$rootScope` injection from the existing code.
 
 ```javascript
-function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout, i18n, cdAnalytics) {
+function cdAnnouncementController($scope, $sce, $rootScope, $timeout, i18n, cdAnalytics) {
     var c = this;
-    c.state = { current_side_nav_id: '' };
+    c.state = { current_side_nav_id: '', compact: false };
     c.topicOptions = [];
     c.selectedTopic = null;
     var initialized = false;
@@ -602,25 +611,33 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
         };
 
         // 1) Fetch via the payload — the server reads input.* (NOT the URL), so
-        //    the content load has zero URL dependency and SP never recompiles
-        //    the widget. This is the single, explicit reload path.
+        //    the content load has zero URL dependency. This is the single,
+        //    explicit reload path.
         loadAnnouncements(selection);
 
-        // 2) Mirror the selection into the URL purely so it's shareable and
-        //    survives refresh. Nothing reads this during the in-session reload,
-        //    so even if SP notices the change it can't break correctness. Written
-        //    atomically + .replace() (no history push) to minimize any reaction.
-        var search = $location.search();
-        search.origin_id = selection.origin_id;
-        search.topic_id = selection.topic_id;
-        search.scope = selection.scope;
-        Object.keys(search).forEach(function(k) {
-            if (search[k] === null || search[k] === undefined) {
-                delete search[k];
-            }
-        });
-        $location.search(search).replace();
+        // 2) Mirror the selection into the address bar for shareable/refreshable
+        //    links — using the browser History API directly, NOT Angular's
+        //    $location. On this instance ANY $location write (even .replace())
+        //    triggers Service Portal to recompile the whole widget. history.
+        //    replaceState updates the URL without firing Angular's location
+        //    change pipeline, so SP never reacts. Fresh loads still read the
+        //    real URL via $sp.getParameter, so shareable links keep working.
+        updateUrlSilently(selection);
     };
+
+    function updateUrlSilently(selection) {
+        if (!window.history || !window.history.replaceState) { return; }
+        var params = new URLSearchParams(window.location.search);
+
+        // Preserve unrelated params (e.g. id=) and only touch our three.
+        selection.origin_id ? params.set('origin_id', selection.origin_id) : params.delete('origin_id');
+        selection.topic_id  ? params.set('topic_id', selection.topic_id)   : params.delete('topic_id');
+        selection.scope     ? params.set('scope', selection.scope)         : params.delete('scope');
+
+        var qs = params.toString();
+        var newUrl = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
+        window.history.replaceState({}, '', newUrl);
+    }
 
     c.containerStyle = {
         background: c.options.background_color || 'rgba(255, 255, 255, .2)'
@@ -660,7 +677,7 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
 **Fixes folded in while we're here:**
 
 - `$rootScope` is now actually injected (it was used but undeclared in the original).
-- `$location` is injected for URL sync.
+- URL updates use the browser History API (`history.replaceState`), not Angular's `$location` — see Issue 2.
 - The original kept `i18n`, `cdAnalytics`, `$timeout` as injections — preserved in case other code in the page references them, but they're still unused.
 
 ### HTML Template
@@ -670,9 +687,11 @@ Hidden entirely when the page hosts the widget but yields no topics
 (i.e., the only option would be "Agency Wide" alone) — that means the
 dropdown only appears when there's actually something to switch between.
 
-At narrow widths the `<select>` is hidden by CSS and a Font Awesome filter
-icon is shown instead; clicking it toggles a panel of the same options.
-Both render in the markup; CSS decides which is visible at a given width.
+At narrow widths the `<select>` is replaced by a Font Awesome filter icon
+that toggles a panel of the same options. Which one renders is driven by
+`c.state.compact`, a flag set in the link function from the widget's
+measured width — **not** a CSS `@container` query, because the Service
+Portal SASS compiler can't be relied on to support `@container`.
 
 ```html
 <div class="widget-container"
@@ -689,8 +708,10 @@ Both render in the markup; CSS decides which is visible at a given width.
              which is redundant (both render the same homepage content), so hide. -->
         <div class="topic-selector" ng-if="data.topics && data.topics.length > 0">
 
-            <!-- Wide layout: native select -->
+            <!-- Wide layout: native select. Shown via JS width flag (the SP SCSS
+                 compiler can't be relied on for @container queries). -->
             <select class="topic-select"
+                    ng-if="!c.state.compact"
                     ng-model="c.selectedTopic"
                     ng-options="opt.label for opt in c.topicOptions"
                     ng-change="c.onTopicChange()"
@@ -698,7 +719,7 @@ Both render in the markup; CSS decides which is visible at a given width.
             </select>
 
             <!-- Narrow layout: filter icon + popover panel -->
-            <div class="topic-filter-compact">
+            <div class="topic-filter-compact" ng-if="c.state.compact">
                 <button type="button"
                         class="filter-toggle"
                         ng-click="c.toggleFilter()"
@@ -771,14 +792,12 @@ Both render in the markup; CSS decides which is visible at a given width.
 
 ### SCSS
 
-Adds the flex header layout, the select styling, and a responsive
-collapse: below a container width the `<select>` is hidden and a filter
-icon + popover panel takes over.
-
-Uses a **container query** keyed off the widget's own width (not the
-viewport) so the collapse is accurate regardless of which column the
-widget sits in. `container-type: inline-size` is set on `.widget-container`
-and the breakpoint is `@container (max-width: 600px)` — tune `600px` to taste.
+Adds the flex header layout, the select styling, and the compact filter
+(icon + popover panel) styling. Which control is visible is decided by
+`ng-if="c.state.compact"` in the template — driven by a JS width check in
+the link function — so the SCSS does **not** use an `@container` query
+(the SP SASS compiler can't be relied on to support it). The breakpoint
+lives in JS (`width < 600`), tune it there.
 
 ```scss
 .widget-container {
@@ -787,10 +806,6 @@ and the breakpoint is `@container (max-width: 600px)` — tune `600px` to taste.
     gap: 16px;
     z-index: 0;
     color: white;
-
-    // Establish this element as a query container so .topic-selector can
-    // respond to the WIDGET width rather than the viewport width.
-    container-type: inline-size;
 
     .section-title-container {
         display: flex;
@@ -839,9 +854,10 @@ and the breakpoint is `@container (max-width: 600px)` — tune `600px` to taste.
                 }
             }
 
-            // Compact (icon) variant — hidden by default, shown at narrow widths
+            // Compact (icon) variant. Presence is controlled by ng-if on
+            // c.state.compact, so no display toggle is needed here.
             .topic-filter-compact {
-                display: none;
+                position: relative;
 
                 .filter-toggle {
                     background: rgba(255, 255, 255, 0.15);
@@ -906,12 +922,6 @@ and the breakpoint is `@container (max-width: 600px)` — tune `600px` to taste.
                         }
                     }
                 }
-            }
-
-            // At narrow WIDGET widths: hide the native select, show the icon
-            @container (max-width: 600px) {
-                .topic-select { display: none; }
-                .topic-filter-compact { display: block; }
             }
         }
     }
@@ -982,17 +992,44 @@ and the breakpoint is `@container (max-width: 600px)` — tune `600px` to taste.
 
 ### Link Function
 
-Two responsibilities now:
+Three responsibilities now:
 
 1. The existing keyboard/carousel handling — unchanged, kept for any
    carousel parent that wraps this widget.
-2. **New:** close the compact filter panel when the user clicks outside
-   it. Bound here because the link function already has `$elem` (the
-   widget root) for DOM work.
+2. **Width check:** measure the widget's actual rendered width and set
+   `c.state.compact` so the template swaps the `<select>` for the filter
+   icon below the breakpoint. Re-checked on window resize (debounced).
+   This replaces the unreliable CSS `@container` query.
+3. **Outside-click / Escape:** close the compact filter panel. Bound here
+   because the link function already has `$elem` (the widget root).
 
 ```javascript
 function cdAnnouncementLink($scope, $elem, $attr, c) {
     c.$announcement = jQuery($elem[0]);
+
+    var COMPACT_BREAKPOINT = 600; // px — widget width below which we collapse
+
+    // --- Width check: drive c.state.compact from the WIDGET's rendered width ---
+    function checkWidth() {
+        var width = c.$announcement.width();
+        var compact = width > 0 && width < COMPACT_BREAKPOINT;
+        if (compact !== c.state.compact) {
+            $scope.$apply(function() {
+                c.state.compact = compact;
+                if (!compact) { c.filterOpen = false; } // tidy up when expanding
+            });
+        }
+    }
+    // Initial measure — defer one tick so layout has settled.
+    setTimeout(checkWidth, 0);
+
+    // Self-contained debounce so we don't depend on lodash being on window.
+    var resizeTimer = null;
+    function onResize() {
+        if (resizeTimer) { clearTimeout(resizeTimer); }
+        resizeTimer = setTimeout(checkWidth, 150);
+    }
+    jQuery(window).on('resize.topicFilter', onResize);
 
     // --- Existing carousel keyboard handling (unchanged) ---
     c.$announcement.bind('keyup', function(e) {
@@ -1012,7 +1049,7 @@ function cdAnnouncementLink($scope, $elem, $attr, c) {
         }
     });
 
-    // --- New: close the compact filter panel on outside click ---
+    // --- Close the compact filter panel on outside click ---
     c.$announcement.on('click.topicFilter', function(e) {
         if (!c.filterOpen) return;
         // If the click landed outside the compact filter wrapper, close.
@@ -1030,14 +1067,20 @@ function cdAnnouncementLink($scope, $elem, $attr, c) {
 
     $scope.$on('$destroy', function() {
         c.$announcement.off('.topicFilter');
+        jQuery(window).off('.topicFilter');
     });
 }
 ```
 
-> Note: this listens within the widget root (`$elem`). A click on the
-> filter toggle itself is inside `.topic-filter-compact`, so it won't
-> self-close — the toggle's own `ng-click` handles open/close. Clicks on
-> the rest of the widget (or anywhere that bubbles to the root) close it.
+> Note on the breakpoint: it measures the **widget's** width
+> (`c.$announcement.width()`), not the viewport — so the collapse is
+> correct even when the widget sits in a narrow column on a wide screen,
+> which is what the `@container` query was trying (and failing) to do.
+> Tune `COMPACT_BREAKPOINT` to taste.
+
+> Note on outside-click: this listens within the widget root (`$elem`).
+> A click on the filter toggle itself is inside `.topic-filter-compact`,
+> so it won't self-close — the toggle's own `ng-click` handles open/close.
 > If you need clicks *fully outside* the widget to close it too, bind to
 > `$document` instead — omitted here to avoid a global listener.
 
@@ -1125,11 +1168,12 @@ topics built on **both** the initial run and the `loadData` run:
   skeleton flash a few seconds later, and NO second `controller init`
   log (confirms no widget recompile). This is the core Issue 2 fix.
 - [ ] **No recompile on change** — The controller is NOT re-instantiated
-  on dropdown change (watch for a single `controller init` in console
-  across multiple changes).
-- [ ] **URL updates on change** — After selecting a topic, the address
-  bar reflects `origin_id`/`topic_id` (or `scope=all`), via `.replace()`
-  (no new history entry pushed).
+  on dropdown change (watch for a SINGLE `controller init` in console
+  across multiple changes, and NO second skeleton flash seconds later).
+- [ ] **URL updates on change without recompile** — After selecting a
+  topic, the address bar reflects `origin_id`/`topic_id` (or `scope=all`)
+  via `history.replaceState`, and this does NOT trigger a widget
+  recompile (the whole reason for using the History API over `$location`).
 - [ ] **Shareable link** — Pasting a URL with `scope=all` or a
   `topic_id` into a fresh tab loads that selection (server falls back to
   URL params when no payload present) and the dropdown pre-selects it.
@@ -1150,15 +1194,22 @@ topics built on **both** the initial run and the `loadData` run:
   the two fixed options.
 
 **Responsive filter (narrow width):**
-- [ ] **Wide widget** — Native `<select>` shows; filter icon hidden.
-- [ ] **Narrow widget (below 600px container width)** — `<select>`
-  hidden; `fa-filter` icon shows. Confirm it keys off WIDGET width, not
-  viewport (test by placing the widget in a narrow column on a wide
-  screen — it should still collapse).
+- [ ] **Wide widget** — Native `<select>` renders (`c.state.compact`
+  false); filter icon absent.
+- [ ] **Narrow widget (widget width below `COMPACT_BREAKPOINT`)** —
+  `<select>` absent; `fa-filter` icon renders. Confirm it keys off
+  WIDGET width, not viewport (place the widget in a narrow column on a
+  wide screen — it should still collapse).
+- [ ] **Resize across the breakpoint** — Dragging the window/column
+  across 600px flips between select and icon (debounced, no flicker).
+- [ ] **Initial render at narrow width** — On first paint in a narrow
+  container, the icon shows (the deferred `setTimeout(checkWidth, 0)`
+  measures after layout settles). This was the bug where neither
+  control appeared.
 - [ ] **Tap filter icon** — Panel opens listing all options; current
   selection shows the check + highlight.
 - [ ] **Select an option from panel** — Panel closes, content reloads,
-  same URL/`onTopicChange` behavior as the select.
+  same `onTopicChange` behavior as the select.
 - [ ] **Click outside panel** — Panel closes without changing selection.
 - [ ] **Escape key** — Panel closes.
 - [ ] **Selection persists across the breakpoint** — Pick a topic while
