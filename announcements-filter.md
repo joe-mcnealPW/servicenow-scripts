@@ -11,6 +11,33 @@ Selecting an option updates the URL via `$location.search()` (no reload) and re-
 
 ---
 
+## Known Issue & Fix — Dropdown Disappears After Load
+
+**Symptom:** `data.topics` is populated with valid data on initial render,
+but the dropdown never shows.
+
+**Root cause:** The two-phase server pattern wipes `data.topics` on the
+`loadData` round-trip:
+
+1. **Initial render** — server runs with `!input`, builds `data.topics`. ✅
+2. **Controller fires** `c.server.get({action:'loadData'})` — server runs
+   *again*, but now `input` is truthy, so the (original) `if (!input)`
+   guard **skips** the topics block. The response `data` has no `topics`.
+3. **`.then()` does `c.data = response.data`** — overwrites the entire
+   data object, so `data.topics` is gone and the dropdown's
+   `ng-if="data.topics.length > 0"` evaluates false.
+
+**Fix (applied below):** Build `data.topics` on **every** server run
+(drop the `if (!input)` guard). The topic list is cheap relative to the
+content fetch and must survive the `loadData` overwrite. The instrumented
+logging below confirms the failure point if you want to verify before/after.
+
+> Alternative considered: preserve `topics` client-side (`c.topics = c.data.topics`,
+> restore after overwrite). Rejected in favor of the simpler server-side
+> approach unless the topic walk proves expensive at scale.
+
+---
+
 ## How It Works End-to-End
 
 ```
@@ -235,6 +262,8 @@ merges the results.
 
 ```javascript
 (function() {
+    gs.info('[AgencyAnn] server run START — input: ' + JSON.stringify(input));
+
     data.instance_id = $sp.getInstanceRecord().sys_id.toString();
     data.isLoading = true;
     data.origin_id = $sp.getParameter('origin_id');
@@ -250,13 +279,17 @@ merges the results.
         data.viewAllURL += '&topic_id=' + data.topic_id;
     }
 
-    // Build the topic dropdown list on initial render (don't re-query on every loadData call)
-    if (!input) {
-        data.topics = new cd_ContentDeliveryExtended().getTopicsForWidget('d0dd830647ae3e10d1dbf8ba436d4314');
-    }
+    // Build the topic dropdown list on EVERY run.
+    // NOTE: this must NOT be guarded by `if (!input)`. The client controller's
+    // loadData round-trip replaces c.data with this response object, so if
+    // topics aren't rebuilt here they'd be wiped after the first fetch and the
+    // dropdown would never render. The walk is cheap relative to the content fetch.
+    data.topics = new cd_ContentDeliveryExtended().getTopicsForWidget('d0dd830647ae3e10d1dbf8ba436d4314');
+    gs.info('[AgencyAnn] topics built — count: ' + (data.topics ? data.topics.length : 'null') + ' | ' + JSON.stringify(data.topics));
 
     /* force async */
     if (!input || input.action !== 'loadData') {
+        gs.info('[AgencyAnn] early return (no loadData action)');
         return;
     }
 
@@ -350,9 +383,12 @@ handler, URL sync via `$location.search()`. Also fixes the missing
 `$rootScope` injection from the existing code.
 
 ```javascript
-function ($scope, $sce, $location, $rootScope, $timeout, i18n, cdAnalytics) {
+function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout, i18n, cdAnalytics) {
     var c = this;
     c.state = { current_side_nav_id: '' };
+
+    console.log('[AgencyAnn] controller init — c.data.topics:', c.data.topics);
+    console.log('[AgencyAnn] topics length:', (c.data.topics || []).length, '| scope:', c.data.scope, '| topic_id:', c.data.topic_id);
 
     // Build the dropdown options: Agency Wide → All Topics → every discovered topic
     c.topicOptions = [
@@ -377,6 +413,8 @@ function ($scope, $sce, $location, $rootScope, $timeout, i18n, cdAnalytics) {
         };
     }));
 
+    console.log('[AgencyAnn] topicOptions built:', c.topicOptions);
+
     // Pre-select based on current URL params: scope=all wins, then topic_id, else default
     c.selectedTopic = c.topicOptions[0];
     if (c.data.scope === 'all') {
@@ -392,7 +430,10 @@ function ($scope, $sce, $location, $rootScope, $timeout, i18n, cdAnalytics) {
     function loadAnnouncements() {
         c.data.isLoading = true;
         c.server.get({ action: 'loadData' }).then(function(response) {
+            console.log('[AgencyAnn] loadData response.data.topics:', response.data.topics);
+            console.log('[AgencyAnn] BEFORE overwrite — c.data.topics:', c.data.topics);
             c.data = response.data;
+            console.log('[AgencyAnn] AFTER overwrite — c.data.topics:', c.data.topics, '| length:', (c.data.topics || []).length);
             if (c.data.items && c.data.items.length > 0) {
                 Object.keys(c.data.items).map(modifyItem);
             }
@@ -655,6 +696,42 @@ widget. Not relevant to the topic-dropdown feature.
 
 Unchanged. The dropdown is data-driven from `topic` records, not from
 widget options.
+
+---
+
+## Debugging — Expected Log Readout
+
+The logging above is **temporary diagnostic instrumentation** — strip the
+`console.log` and `gs.info` lines once the dropdown is confirmed working.
+
+**With the fix applied,** the browser console should show on load:
+
+```
+[AgencyAnn] controller init — c.data.topics: (Array of topics)
+[AgencyAnn] topics length: N | scope: null | topic_id: null
+[AgencyAnn] topicOptions built: (Array — Agency Wide, All Topics, + N topics)
+[AgencyAnn] loadData response.data.topics: (Array of topics)   ← populated, not undefined
+[AgencyAnn] BEFORE overwrite — c.data.topics: (Array)
+[AgencyAnn] AFTER overwrite — c.data.topics: (Array) | length: N  ← survives the overwrite
+```
+
+**The bug signature (before the fix)** was:
+
+```
+[AgencyAnn] loadData response.data.topics: undefined   ← topics block skipped on loadData
+[AgencyAnn] AFTER overwrite — c.data.topics: undefined | length: 0   ← dropdown dies here
+```
+
+Server-side, `System Logs → All` filtered to `AgencyAnn` should show the
+topics built on **both** the initial run and the `loadData` run:
+
+```
+[AgencyAnn] server run START — input: null
+[AgencyAnn] topics built — count: N | [...]
+[AgencyAnn] early return (no loadData action)
+[AgencyAnn] server run START — input: {"action":"loadData"}
+[AgencyAnn] topics built — count: N | [...]   ← key: now built on loadData too
+```
 
 ---
 
