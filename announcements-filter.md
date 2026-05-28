@@ -11,7 +11,9 @@ Selecting an option updates the URL via `$location.search()` (no reload) and re-
 
 ---
 
-## Known Issue & Fix — Dropdown Disappears After Load
+## Known Issues & Fixes
+
+### Issue 1 — Dropdown Disappears After Load
 
 **Symptom:** `data.topics` is populated with valid data on initial render,
 but the dropdown never shows.
@@ -49,6 +51,33 @@ but the dropdown never shows.
 > Alternative considered: preserve `topics` client-side (`c.topics = c.data.topics`,
 > restore after overwrite). Rejected in favor of the simpler server-side
 > approach unless the topic walk proves expensive at scale.
+
+### Issue 2 — Skeleton Flashes Twice on Topic Change (double fetch)
+
+**Symptom:** Changing the dropdown loads correctly (skeleton → data), then a
+couple seconds later flashes the skeleton again and re-renders the same data.
+Does **not** happen on initial page load — only on dropdown change.
+
+**Root cause:** `onTopicChange` did two things that each triggered a reload:
+
+1. It called `loadAnnouncements()` explicitly (`c.server.get(...)`).
+2. It mutated the URL via `$location.search()`, and Service Portal reacts to
+   the `$location` change by re-resolving the widget on its own.
+
+Two reload paths → two fetches → two skeleton cycles, with the SP-driven one
+landing a beat behind the explicit call.
+
+**Fix (applied below):** Make the URL the **single source of truth**.
+`onTopicChange` now updates the URL params only — it does **not** call
+`loadAnnouncements()`. A single `$scope.$on('$locationChangeSuccess', ...)`
+watcher is the one and only path that triggers a reload, so each change
+fetches exactly once. The watcher is guarded by an `initialized` flag set
+after the first load, so it doesn't double-fire alongside the constructor's
+initial `loadAnnouncements()` call.
+
+**Bonus:** because reloads are now URL-driven, browser **back/forward**
+navigation between topic selections also reloads correctly and re-syncs the
+dropdown (via `preselectFromUrl()`) — previously listed as out of scope.
 
 ---
 
@@ -402,6 +431,7 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
     c.state = { current_side_nav_id: '' };
     c.topicOptions = [];
     c.selectedTopic = null;
+    var initialized = false;
 
     console.log('[AgencyAnn] controller init — c.data.topics:', c.data.topics);
 
@@ -425,6 +455,10 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
                 Object.keys(c.data.items).map(modifyItem);
             }
             c.data.isLoading = false;
+
+            // After the first successful load, allow the $locationChangeSuccess
+            // watcher to drive subsequent reloads.
+            initialized = true;
         });
     }
 
@@ -478,13 +512,25 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
     };
 
     c.onTopicChange = function() {
-        // Sync URL params, then trigger a fresh server load.
+        // Update the URL ONLY. The $locationChangeSuccess watcher below is the
+        // single path that triggers a reload. We do NOT call loadAnnouncements()
+        // here — doing both caused a double-fetch (explicit get() + Service
+        // Portal's own reaction to the $location change), which showed as the
+        // skeleton flashing twice on topic change.
         // Setting a param to null removes it from the URL.
         $location.search('origin_id', c.selectedTopic.origin_id || null);
         $location.search('topic_id', c.selectedTopic.topic_id || null);
         $location.search('scope', c.selectedTopic.scope || null);
-        loadAnnouncements();
     };
+
+    // Single source of truth for reloads. Any URL param change — dropdown
+    // selection OR browser back/forward — runs through here exactly once.
+    // Guarded so it doesn't double-fire alongside the initial loadAnnouncements()
+    // call in the constructor.
+    $scope.$on('$locationChangeSuccess', function() {
+        if (!initialized) { return; }
+        loadAnnouncements();
+    });
 
     c.containerStyle = {
         background: c.options.background_color || 'rgba(255, 255, 255, .2)'
@@ -795,6 +841,12 @@ topics built on **both** the initial run and the `loadData` run:
   correctly (`scope=all`, others removed).
 - [ ] **All Topics → Agency Wide** — `scope` removed, `origin_id`
   set to homepage default.
+- [ ] **Single fetch per change (no double skeleton)** — Changing the
+  dropdown fetches exactly once: skeleton → data, with no second
+  skeleton flash a beat later. Confirms the URL-driven single-path
+  reload (Issue 2 fix).
+- [ ] **Browser back after switching** — Hitting back reloads the
+  previous selection's content AND re-syncs the dropdown to match.
 
 **Edge cases:**
 - [ ] **Page hosts widget but no topic uses it as template** —
@@ -813,10 +865,10 @@ topics built on **both** the initial run and the `loadData` run:
 
 ## Open Items / Out of Scope
 
-- **Browser back/forward syncing** — `$location` updates the URL but
-  the controller doesn't watch `$location` for external changes. If
-  the user hits back, the URL changes but content stays. Add a
-  `$scope.$on('$locationChangeSuccess', ...)` watcher if we want that.
+- **Browser back/forward syncing** — ✅ Now handled. The
+  `$locationChangeSuccess` watcher (added to fix the double-fetch in
+  Issue 2) means back/forward navigation between selections reloads
+  content and re-syncs the dropdown via `preselectFromUrl()`.
 - **All Topics detail URLs** — Clicking into an announcement from the
   All Topics view opens it standalone (no context persisted). If we
   want back-navigation to land on All Topics, stamp `scope=all` (and
