@@ -27,10 +27,24 @@ but the dropdown never shows.
    data object, so `data.topics` is gone and the dropdown's
    `ng-if="data.topics.length > 0"` evaluates false.
 
-**Fix (applied below):** Build `data.topics` on **every** server run
-(drop the `if (!input)` guard). The topic list is cheap relative to the
-content fetch and must survive the `loadData` overwrite. The instrumented
-logging below confirms the failure point if you want to verify before/after.
+**Fix (applied below):** Two changes work together:
+
+1. **Build `data.topics` on every server run** (drop the `if (!input)`
+   guard) so the topic list survives the `loadData` overwrite.
+2. **Build the option list and pre-selection inside the `.then()`**, not
+   synchronously at controller init. The original code built `c.topicOptions`
+   and set `c.selectedTopic` at construction time, then `loadAnnouncements()`
+   replaced `c.data` asynchronously — so the options were locked to the
+   initial payload and never re-derived from the resolved fetch. Moving
+   `buildTopicOptions()` and `preselectFromUrl()` into the promise callback
+   guarantees options always reflect the data actually rendering.
+
+> Note: in the Service Portal lifecycle `c.data` *is* populated synchronously
+> from the initial server run before the controller executes, so the init-time
+> read wasn't undefined on first paint. The real fragility was that the option
+> list was built once and never rebuilt while `c.data` got replaced underneath
+> it — the two fell out of sync (exactly what the topics-wipe bug caused).
+> Deriving options inside `.then()` removes the whole class of problem.
 
 > Alternative considered: preserve `topics` client-side (`c.topics = c.data.topics`,
 > restore after overwrite). Rejected in favor of the simpler server-side
@@ -386,59 +400,69 @@ handler, URL sync via `$location.search()`. Also fixes the missing
 function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout, i18n, cdAnalytics) {
     var c = this;
     c.state = { current_side_nav_id: '' };
+    c.topicOptions = [];
+    c.selectedTopic = null;
 
     console.log('[AgencyAnn] controller init — c.data.topics:', c.data.topics);
-    console.log('[AgencyAnn] topics length:', (c.data.topics || []).length, '| scope:', c.data.scope, '| topic_id:', c.data.topic_id);
 
-    // Build the dropdown options: Agency Wide → All Topics → every discovered topic
-    c.topicOptions = [
-        {
-            label: 'Agency Wide',
-            origin_id: c.data.default_origin_id,
-            topic_id: null,
-            scope: null
-        },
-        {
-            label: 'All Topics',
-            origin_id: null,
-            topic_id: null,
-            scope: 'all'
-        }
-    ].concat((c.data.topics || []).map(function(t) {
-        return {
-            label: t.name,
-            origin_id: t.instance_id,
-            topic_id: t.sys_id,
-            scope: null
-        };
-    }));
-
-    console.log('[AgencyAnn] topicOptions built:', c.topicOptions);
-
-    // Pre-select based on current URL params: scope=all wins, then topic_id, else default
-    c.selectedTopic = c.topicOptions[0];
-    if (c.data.scope === 'all') {
-        c.selectedTopic = c.topicOptions[1];
-    } else if (c.data.topic_id) {
-        var match = c.topicOptions.find(function(opt) { return opt.topic_id === c.data.topic_id; });
-        if (match) c.selectedTopic = match;
-    }
-
-    // Initial load
+    // Kick off the load. Everything that depends on the resolved server data
+    // (option list, pre-selection) is built INSIDE the .then() so it always
+    // reflects the payload actually driving the view — never a stale/initial one.
     loadAnnouncements();
 
     function loadAnnouncements() {
         c.data.isLoading = true;
         c.server.get({ action: 'loadData' }).then(function(response) {
             console.log('[AgencyAnn] loadData response.data.topics:', response.data.topics);
-            console.log('[AgencyAnn] BEFORE overwrite — c.data.topics:', c.data.topics);
             c.data = response.data;
             console.log('[AgencyAnn] AFTER overwrite — c.data.topics:', c.data.topics, '| length:', (c.data.topics || []).length);
+
+            // Build options + pre-selection against the freshly resolved data
+            buildTopicOptions();
+            preselectFromUrl();
+
             if (c.data.items && c.data.items.length > 0) {
                 Object.keys(c.data.items).map(modifyItem);
             }
             c.data.isLoading = false;
         });
+    }
+
+    function buildTopicOptions() {
+        // Agency Wide → All Topics → every discovered topic
+        c.topicOptions = [
+            {
+                label: 'Agency Wide',
+                origin_id: c.data.default_origin_id,
+                topic_id: null,
+                scope: null
+            },
+            {
+                label: 'All Topics',
+                origin_id: null,
+                topic_id: null,
+                scope: 'all'
+            }
+        ].concat((c.data.topics || []).map(function(t) {
+            return {
+                label: t.name,
+                origin_id: t.instance_id,
+                topic_id: t.sys_id,
+                scope: null
+            };
+        }));
+        console.log('[AgencyAnn] topicOptions built:', c.topicOptions);
+    }
+
+    function preselectFromUrl() {
+        // scope=all wins, then topic_id, else default (Agency Wide)
+        c.selectedTopic = c.topicOptions[0];
+        if (c.data.scope === 'all') {
+            c.selectedTopic = c.topicOptions[1];
+        } else if (c.data.topic_id) {
+            var match = c.topicOptions.find(function(opt) { return opt.topic_id === c.data.topic_id; });
+            if (match) c.selectedTopic = match;
+        }
     }
 
     function modifyItem(o) {
