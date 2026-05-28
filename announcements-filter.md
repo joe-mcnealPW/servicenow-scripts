@@ -76,31 +76,35 @@ So the sequence was: explicit `c.server.get()` reload finishes in the current
 controller → SP reacts to the pushed URL change → recompiles the widget →
 fresh controller runs its own initial load (the second skeleton, seconds later).
 
-**Fix (applied below):** Keep the URL as the value carrier (so the server can
-still read `origin_id`/`topic_id`/`scope` via `$sp.getParameter`, and the
-selection stays shareable/refreshable), but change *how* the URL is written so
-SP doesn't see it as a navigation:
+**Fix (final architecture):** Decouple the content fetch from the URL
+entirely.
 
-1. **Write all params in ONE atomic `$location.search(obj)` call** instead of
-   three — a single URL mutation, one reaction.
-2. **Chain `.replace()`** so the current history entry is modified in place
-   rather than a new one pushed — an in-place edit doesn't read as a route
-   change.
+1. **The client sends the selection through the `get()` payload** —
+   `c.server.get({action:'loadData', origin_id, topic_id, scope})`. The
+   server reads `input.origin_id` / `input.topic_id` / `input.scope`
+   first, falling back to `$sp.getParameter(...)` only when the payload
+   is absent (fresh page load, refresh, shareable link). So the in-session
+   reload has **zero URL dependency** — nothing about the fetch touches
+   `$location`, so SP has no reason to recompile.
+2. **`getContent` takes an optional `topicIdOverride` arg** (5th param,
+   back-compatible) so it no longer needs `$sp.getParameter('topic_id')`
+   when the caller supplies the value. The All Topics loop already passed
+   `topic_id` explicitly via `getContentForWidgetInstance`, so it was
+   already URL-independent.
+3. **The URL is updated separately, write-only**, via a single atomic
+   `$location.search(obj).replace()` — purely so the selection is
+   shareable and survives refresh. Because nothing reads it during the
+   reload, a stray SP reaction can't break correctness; `.replace()`
+   (no history push) also minimizes the chance of any reaction at all.
 
-The single `$locationChangeSuccess` watcher then drives one lightweight
-`c.server.get()` reload — no recompile, no double skeleton. The `initialized`
-flag still guards against the watcher firing alongside the constructor's
-initial load.
+Net result: one explicit reload path (`loadAnnouncements(selection)`),
+no `$locationChangeSuccess` watcher, no recompile, no double skeleton.
 
-> If `.replace()` + atomic write still recompiles in your instance, the
-> fallback is to stop carrying values in the URL and pass them through the
-> `get()` payload instead (`c.server.get({action:'loadData', origin_id, ...})`,
-> server reads `input.*`). That eliminates the recompile entirely but gives up
-> shareable URLs — so it's the fallback, not the default.
-
-**Bonus:** because reloads are URL-driven, browser **back/forward** navigation
-between selections reloads content and re-syncs the dropdown via
-`preselectFromUrl()` — previously listed as out of scope.
+> Why this is better than the earlier "atomic write + replace()" attempt:
+> that version still *depended* on the URL to carry the value to the
+> server, so it was hostage to whether SP recompiled on the `origin_id`
+> change. Moving the value into the payload removes the dependency, so the
+> URL write is now cosmetic and can't affect the fetch.
 
 ---
 
@@ -110,38 +114,41 @@ between selections reloads content and re-syncs the dropdown via
 Page load
   │
   ▼
-Server runs once
+Server runs once (no input)
+  ├─ Resolves origin_id/topic_id/scope: input.* → URL fallback
   ├─ Sets instance_id, viewAllURL, isLoading=true
   ├─ Builds data.topics  ← list of topics whose template page hosts this widget
   └─ Returns early (no input.action)
   │
   ▼
-HTML renders → skeleton loaders + dropdown (pre-selected from URL)
+HTML renders → skeleton loaders + dropdown
   │
   ▼
-Client controller → c.server.get({ action: 'loadData' })
+Client controller → loadAnnouncements()  (initial: no selection arg)
+  └─ c.server.get({ action: 'loadData' })   ← server falls back to URL params
   │
   ▼
 Server re-runs with input
-  ├─ If URL has scope=all
-  │    └─ Loop getContent() across [Agency Wide + every topic origin],
-  │       concat, dedupe by sys_id, sort newest first, slice to max_rows
-  └─ Otherwise (Agency Wide or a specific topic)
-       └─ Resolve queryId (origin_id from URL || homepage default || instance_id)
-          └─ getContent($sp, queryId)  ← UNCHANGED — reads topic_id internally
+  ├─ origin_id = input.origin_id || URL || homepage default || instance_id
+  ├─ topic_id  = input.topic_id  || URL
+  ├─ scope     = input.scope     || URL
+  ├─ If scope=all
+  │    └─ Loop across [Agency Wide + every topic origin],
+  │       dedupe by sys_id, sort newest first, slice to max_rows
+  └─ Otherwise
+       └─ getContent($sp, queryId, null, null, topic_id)  ← topic_id passed explicitly
   │
   ▼
-Client receives data.items → renders
+Client receives data.items → buildTopicOptions() → preselectFromUrl() (initial only) → renders
   │
   ▼
-User picks an option from dropdown
-  ├─ Agency Wide    → origin_id = homepage default, topic_id = null, scope = null
-  ├─ All Topics     → origin_id = null,             topic_id = null, scope = 'all'
-  └─ Specific topic → origin_id = topic's instance, topic_id = topic sys_id, scope = null
+User picks an option from dropdown / filter panel
   │
-  ├─ $location.search() applies the three params (nulls remove the param)
-  ├─ data.isLoading = true
-  └─ c.server.get({ action: 'loadData' })  → loop
+  ├─ loadAnnouncements(selection)  ← selection sent in get() PAYLOAD (no URL dependency)
+  │    └─ c.server.get({ action:'loadData', origin_id, topic_id, scope })
+  │       → server reads input.* → no recompile → one skeleton → data
+  │
+  └─ $location.search(obj).replace()  ← URL mirror, write-only, for shareable links
 ```
 
 ---
@@ -203,12 +210,25 @@ cd_ContentDeliveryExtended.prototype = Object.extendsObject(cd_ContentDelivery, 
     },
 
     /**
-     * Routes content retrieval through preview-aware paths. Unchanged.
+     * Routes content retrieval through preview-aware paths.
+     *
+     * @param {object} $sp - Service Portal scope object
+     * @param {string} instanceId - origin/instance sys_id selecting the content
+     * @param {string} [sysId] - optional specific content sys_id
+     * @param {object} [options] - optional flags (e.g. { newsFeed: true })
+     * @param {string} [topicIdOverride] - OPTIONAL. When supplied, this topic_id
+     *        is used instead of reading $sp.getParameter('topic_id'). Lets callers
+     *        pass the selection through the server-script `input` payload so the
+     *        fetch no longer depends on the URL. Back-compatible: when omitted,
+     *        behavior is identical to before (reads from $sp).
      */
-    getContent: function ($sp, instanceId, sysId, options) {
+    getContent: function ($sp, instanceId, sysId, options, topicIdOverride) {
         var grInstanceRecord = $sp.getInstanceRecord();
         var spInstanceId = grInstanceRecord && grInstanceRecord.getUniqueValue();
-        var topicId = $sp.getParameter('topic_id');
+        // Override wins; fall back to the URL param for legacy callers / fresh loads.
+        var topicId = (topicIdOverride !== undefined && topicIdOverride !== null)
+            ? topicIdOverride
+            : $sp.getParameter('topic_id');
         var isNewsFeedRequest = options && options.newsFeed;
 
         if ($sp.getParameter('sca_content_id') && $sp.getParameter('sca_instance_id') && $sp.getParameter('sca_instance_id') === instanceId) {
@@ -332,10 +352,15 @@ merges the results.
 
     data.instance_id = $sp.getInstanceRecord().sys_id.toString();
     data.isLoading = true;
-    data.origin_id = $sp.getParameter('origin_id');
+
+    // Resolve selection params. Prefer the input payload (passed by the client
+    // on dropdown change — no URL dependency, so no widget recompile), and fall
+    // back to the URL params so fresh page loads, refreshes, and shareable links
+    // still work. `input` is only present on the loadData round-trip.
+    data.origin_id = (input && input.origin_id) || $sp.getParameter('origin_id') || null;
     data.page_id = $sp.getParameter('id');
-    data.topic_id = $sp.getParameter('topic_id') || null;
-    data.scope = $sp.getParameter('scope') || null;
+    data.topic_id = (input && input.topic_id) || $sp.getParameter('topic_id') || null;
+    data.scope = (input && input.scope) || $sp.getParameter('scope') || null;
 
     // Default origin_id for the "Agency Wide" dropdown option (homepage instance)
     data.default_origin_id = 'ace327ce47a67e10d1dbf8ba436d439b';
@@ -362,15 +387,12 @@ merges the results.
     var extended = new cd_ContentDeliveryExtended();
 
     if (data.scope === 'all') {
-        // All Topics: loop getContent() across Agency Wide + every topic origin,
-        // dedupe by sys_id, sort newest first.
+        // All Topics: query content across Agency Wide + every topic origin,
+        // dedupe by sys_id, sort newest first. This path already passes topic_id
+        // explicitly per-origin (via getContentForWidgetInstance), so it never
+        // depended on the URL param.
         var seen = {};
         var merged = [];
-
-        // Stash the user's URL topic_id so we can clear it for the loop and restore after.
-        // getContent() reads topic_id from $sp.getParameter() internally; for the
-        // Agency-Wide leg we want it absent, and for each topic leg we set it explicitly.
-        var originalTopicParam = $sp.getParameter('topic_id');
 
         // Build the full list of origins to query: Agency Wide first, then every topic
         var origins = [{ origin_id: data.default_origin_id, topic_id: null }];
@@ -380,9 +402,8 @@ merges the results.
         });
 
         origins.forEach(function(o) {
-            // getContent reads topic_id from $sp.getParameter; we can't mutate $sp,
-            // but the underlying getContentForWidgetInstance accepts topicId as an arg.
-            // So we call it directly here to avoid the param-reading branch.
+            // Call getContentForWidgetInstance directly with an explicit topicId
+            // so each leg fetches the right topic's content without touching $sp.
             var items = cd_ContentDelivery.getContentForWidgetInstance(o.origin_id, o.topic_id, null, null) || [];
             items.forEach(function(item) {
                 var sysId = item.sys_id;
@@ -410,7 +431,10 @@ merges the results.
             data.origin_id = data.default_origin_id;
         }
         data.queryId = data.origin_id ? data.origin_id : data.instance_id;
-        data.items = extended.getContent($sp, data.queryId);
+        // Pass topic_id explicitly as the override (5th arg) so getContent does
+        // not depend on $sp.getParameter('topic_id') — data.topic_id already
+        // resolved from input payload OR URL above.
+        data.items = extended.getContent($sp, data.queryId, null, null, data.topic_id);
     }
 
     if (options.max_rows) {
@@ -428,13 +452,13 @@ merges the results.
 ```
 
 **Why the `scope=all` branch calls `getContentForWidgetInstance` directly
-instead of `getContent`:** `getContent` reads `topic_id` from `$sp.getParameter`,
-which we can't change between iterations of the loop. The underlying
-`getContentForWidgetInstance(instanceId, topicId, ...)` method takes
-`topicId` as an explicit arg, so we bypass the param-reading wrapper.
-The preview routing in `getContent` (`sca_content_id`, campaign preview)
-only fires when authors are previewing content — not relevant in the
-All Topics view, so skipping that routing is fine.
+instead of `getContent`:** the loop needs a *different* `topic_id` per
+iteration. It calls `getContentForWidgetInstance(instanceId, topicId, ...)`
+directly, passing each topic explicitly — so it never depended on the URL
+param (it predates the `topicIdOverride` arg now on `getContent`, and
+either approach works here). The preview routing in `getContent`
+(`sca_content_id`, campaign preview) only fires when authors are previewing
+content — not relevant in the All Topics view, so skipping it is fine.
 
 **Dedupe:** keyed by `item.sys_id`. If the same announcement is published
 to Agency Wide and to a topic (or to multiple topics), it shows once.
@@ -445,8 +469,11 @@ to Agency Wide and to a topic (or to multiple topics), it shows once.
 ### Client Controller
 
 Adds: dropdown state (Agency Wide + All Topics + topics), selection
-handler, URL sync via `$location.search()`. Also fixes the missing
-`$rootScope` injection from the existing code.
+handler, and a responsive icon/panel for narrow widths. The selection
+is sent to the server through the **`get()` payload** (not the URL), and
+the URL is updated separately via `$location.search().replace()` purely
+for shareable/refreshable links. Also fixes the missing `$rootScope`
+injection from the existing code.
 
 ```javascript
 function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout, i18n, cdAnalytics) {
@@ -458,29 +485,48 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
 
     console.log('[AgencyAnn] controller init — c.data.topics:', c.data.topics);
 
-    // Kick off the load. Everything that depends on the resolved server data
-    // (option list, pre-selection) is built INSIDE the .then() so it always
-    // reflects the payload actually driving the view — never a stale/initial one.
+    // Initial load. On first run we have no selection yet, so we let the server
+    // resolve params from the URL (shareable/refreshable links work), then build
+    // options and pre-select to match. Subsequent loads pass the selection
+    // through the payload — see loadAnnouncements(selection).
     loadAnnouncements();
 
-    function loadAnnouncements() {
+    // selection (optional): { origin_id, topic_id, scope }. When provided, it's
+    // passed in the get() payload so the server reads input.* — NO URL dependency,
+    // so Service Portal never recompiles the widget. When omitted (initial load),
+    // the server falls back to URL params.
+    function loadAnnouncements(selection) {
         c.data.isLoading = true;
-        c.server.get({ action: 'loadData' }).then(function(response) {
+
+        var payload = { action: 'loadData' };
+        if (selection) {
+            payload.origin_id = selection.origin_id || null;
+            payload.topic_id = selection.topic_id || null;
+            payload.scope = selection.scope || null;
+        }
+
+        c.server.get(payload).then(function(response) {
             console.log('[AgencyAnn] loadData response.data.topics:', response.data.topics);
             c.data = response.data;
-            console.log('[AgencyAnn] AFTER overwrite — c.data.topics:', c.data.topics, '| length:', (c.data.topics || []).length);
 
-            // Build options + pre-selection against the freshly resolved data
+            // Always rebuild options against the freshly resolved data.
             buildTopicOptions();
-            preselectFromUrl();
+
+            // Only derive the selection FROM the URL on the initial load. After
+            // that, c.selectedTopic is owned by the dropdown / selectTopic(), and
+            // re-reading the URL would fight the payload-driven selection.
+            if (!initialized) {
+                preselectFromUrl();
+            } else {
+                // Re-resolve the selected option object against the new options
+                // array so the <select> stays bound to a current reference.
+                syncSelectedReference(selection);
+            }
 
             if (c.data.items && c.data.items.length > 0) {
                 Object.keys(c.data.items).map(modifyItem);
             }
             c.data.isLoading = false;
-
-            // After the first successful load, allow the $locationChangeSuccess
-            // watcher to drive subsequent reloads.
             initialized = true;
         });
     }
@@ -512,7 +558,8 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
     }
 
     function preselectFromUrl() {
-        // scope=all wins, then topic_id, else default (Agency Wide)
+        // scope=all wins, then topic_id, else default (Agency Wide).
+        // Used ONLY on the initial load to match the dropdown to the URL.
         c.selectedTopic = c.topicOptions[0];
         if (c.data.scope === 'all') {
             c.selectedTopic = c.topicOptions[1];
@@ -520,6 +567,19 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
             var match = c.topicOptions.find(function(opt) { return opt.topic_id === c.data.topic_id; });
             if (match) c.selectedTopic = match;
         }
+    }
+
+    function syncSelectedReference(selection) {
+        // After a payload-driven reload, point c.selectedTopic at the matching
+        // object in the freshly rebuilt topicOptions array, so the <select>'s
+        // ng-model stays bound to a live reference (ng-options compares by ref).
+        if (!selection) return;
+        var match = c.topicOptions.find(function(opt) {
+            return opt.origin_id === selection.origin_id &&
+                   opt.topic_id === selection.topic_id &&
+                   opt.scope === selection.scope;
+        });
+        if (match) c.selectedTopic = match;
     }
 
     function modifyItem(o) {
@@ -535,50 +595,52 @@ function cdAnnouncementController($scope, $sce, $location, $rootScope, $timeout,
     };
 
     c.onTopicChange = function() {
-        // Update the URL so the selection is shareable/refreshable (the server
-        // reads origin_id/topic_id/scope via $sp.getParameter on reload).
-        //
-        // Two things here are deliberate to STOP Service Portal from fully
-        // recompiling the widget (which tore down + re-instantiated the whole
-        // controller ~5s after each change):
-        //
-        //   1. Build the entire search object and apply it in ONE
-        //      $location.search(obj) call — not three separate writes. One
-        //      atomic URL mutation = one change for SP to react to, instead of
-        //      three mid-sequence digests it can interpret as navigation.
-        //   2. Chain .replace() so we modify the CURRENT history entry in place
-        //      rather than pushing a new one. A pushed entry reads as a route
-        //      change and is what triggers SP's page re-resolution.
-        //
-        // The $locationChangeSuccess watcher below is the single path that then
-        // triggers the in-place c.server.get() reload — no recompile.
-        var search = $location.search();
-        search.origin_id = c.selectedTopic.origin_id || null;
-        search.topic_id = c.selectedTopic.topic_id || null;
-        search.scope = c.selectedTopic.scope || null;
+        var selection = {
+            origin_id: c.selectedTopic.origin_id || null,
+            topic_id: c.selectedTopic.topic_id || null,
+            scope: c.selectedTopic.scope || null
+        };
 
-        // Strip nulls so empty params drop out of the URL entirely
+        // 1) Fetch via the payload — the server reads input.* (NOT the URL), so
+        //    the content load has zero URL dependency and SP never recompiles
+        //    the widget. This is the single, explicit reload path.
+        loadAnnouncements(selection);
+
+        // 2) Mirror the selection into the URL purely so it's shareable and
+        //    survives refresh. Nothing reads this during the in-session reload,
+        //    so even if SP notices the change it can't break correctness. Written
+        //    atomically + .replace() (no history push) to minimize any reaction.
+        var search = $location.search();
+        search.origin_id = selection.origin_id;
+        search.topic_id = selection.topic_id;
+        search.scope = selection.scope;
         Object.keys(search).forEach(function(k) {
             if (search[k] === null || search[k] === undefined) {
                 delete search[k];
             }
         });
-
         $location.search(search).replace();
     };
 
-    // Single source of truth for reloads. A URL param change — dropdown
-    // selection OR browser back/forward — runs through here exactly once and
-    // does a lightweight in-place server fetch (no widget recompile).
-    // Guarded so it doesn't double-fire alongside the initial loadAnnouncements()
-    // call in the constructor.
-    $scope.$on('$locationChangeSuccess', function() {
-        if (!initialized) { return; }
-        loadAnnouncements();
-    });
-
     c.containerStyle = {
         background: c.options.background_color || 'rgba(255, 255, 255, .2)'
+    };
+
+    // --- Responsive filter (narrow widths) ---
+    // Below the CSS breakpoint the <select> is hidden and a filter icon is
+    // shown instead; clicking it toggles a panel of the same options.
+    c.filterOpen = false;
+
+    c.toggleFilter = function() {
+        c.filterOpen = !c.filterOpen;
+    };
+
+    // Used by the icon-panel option buttons. Sets the model the same way the
+    // native <select> would, then runs the shared change handler and closes.
+    c.selectTopic = function(opt) {
+        c.selectedTopic = opt;
+        c.filterOpen = false;
+        c.onTopicChange();
     };
 
     $rootScope.$on('topic-side-nav:activeChanged', function(event, data) {
@@ -608,6 +670,10 @@ Hidden entirely when the page hosts the widget but yields no topics
 (i.e., the only option would be "Agency Wide" alone) — that means the
 dropdown only appears when there's actually something to switch between.
 
+At narrow widths the `<select>` is hidden by CSS and a Font Awesome filter
+icon is shown instead; clicking it toggles a panel of the same options.
+Both render in the markup; CSS decides which is visible at a given width.
+
 ```html
 <div class="widget-container"
      id="{{ data.instance_id }}"
@@ -618,16 +684,43 @@ dropdown only appears when there's actually something to switch between.
             {{options.title}}
         </h3>
 
-        <!-- Topic dropdown — shown whenever at least one topic was discovered.
-             When 0 topics, dropdown would only show "Agency Wide" + "All Topics"
+        <!-- Topic selector — shown whenever at least one topic was discovered.
+             When 0 topics, it would only show "Agency Wide" + "All Topics"
              which is redundant (both render the same homepage content), so hide. -->
         <div class="topic-selector" ng-if="data.topics && data.topics.length > 0">
+
+            <!-- Wide layout: native select -->
             <select class="topic-select"
                     ng-model="c.selectedTopic"
                     ng-options="opt.label for opt in c.topicOptions"
                     ng-change="c.onTopicChange()"
                     aria-label="Filter announcements by topic">
             </select>
+
+            <!-- Narrow layout: filter icon + popover panel -->
+            <div class="topic-filter-compact">
+                <button type="button"
+                        class="filter-toggle"
+                        ng-click="c.toggleFilter()"
+                        aria-haspopup="true"
+                        aria-expanded="{{c.filterOpen}}"
+                        aria-label="Filter announcements by topic">
+                    <i class="fa fa-filter"></i>
+                </button>
+
+                <div class="filter-panel" ng-if="c.filterOpen" role="menu">
+                    <button type="button"
+                            class="filter-option"
+                            role="menuitemradio"
+                            ng-repeat="opt in c.topicOptions"
+                            ng-class="{ 'is-selected': opt === c.selectedTopic }"
+                            aria-checked="{{opt === c.selectedTopic}}"
+                            ng-click="c.selectTopic(opt)">
+                        <i class="fa fa-check" ng-if="opt === c.selectedTopic"></i>
+                        <span>{{opt.label}}</span>
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -678,9 +771,14 @@ dropdown only appears when there's actually something to switch between.
 
 ### SCSS
 
-Adds the flex layout for header (title left, dropdown right) and styles
-the select to read on the translucent white background. All other rules
-unchanged.
+Adds the flex header layout, the select styling, and a responsive
+collapse: below a container width the `<select>` is hidden and a filter
+icon + popover panel takes over.
+
+Uses a **container query** keyed off the widget's own width (not the
+viewport) so the collapse is accurate regardless of which column the
+widget sits in. `container-type: inline-size` is set on `.widget-container`
+and the breakpoint is `@container (max-width: 600px)` — tune `600px` to taste.
 
 ```scss
 .widget-container {
@@ -689,6 +787,10 @@ unchanged.
     gap: 16px;
     z-index: 0;
     color: white;
+
+    // Establish this element as a query container so .topic-selector can
+    // respond to the WIDGET width rather than the viewport width.
+    container-type: inline-size;
 
     .section-title-container {
         display: flex;
@@ -704,6 +806,7 @@ unchanged.
 
         .topic-selector {
             flex-shrink: 0;
+            position: relative;
 
             .topic-select {
                 background: rgba(255, 255, 255, 0.15);
@@ -734,6 +837,81 @@ unchanged.
                     color: #222;
                     background: white;
                 }
+            }
+
+            // Compact (icon) variant — hidden by default, shown at narrow widths
+            .topic-filter-compact {
+                display: none;
+
+                .filter-toggle {
+                    background: rgba(255, 255, 255, 0.15);
+                    color: white;
+                    border: 1px solid rgba(255, 255, 255, 0.4);
+                    border-radius: 8px;
+                    padding: 8px 10px;
+                    font-size: 16px;
+                    line-height: 1;
+                    cursor: pointer;
+
+                    &:hover { background-color: rgba(255, 255, 255, 0.25); }
+                    &:focus { outline: 2px solid white; outline-offset: 2px; }
+                }
+
+                .filter-panel {
+                    position: absolute;
+                    top: calc(100% + 8px);
+                    right: 0;
+                    z-index: 10;
+                    min-width: 200px;
+                    background: white;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+                    padding: 6px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+
+                    .filter-option {
+                        display: flex;
+                        align-items: center;
+                        gap: 8px;
+                        width: 100%;
+                        text-align: left;
+                        background: transparent;
+                        border: none;
+                        border-radius: 6px;
+                        padding: 10px 12px;
+                        font-size: 14px;
+                        color: #222;
+                        cursor: pointer;
+
+                        .fa-check {
+                            font-size: 12px;
+                            color: #A94E2F;
+                        }
+
+                        // Reserve space for the check so labels align whether or not selected
+                        span { flex: 1; }
+
+                        &:hover { background: rgba(0, 0, 0, 0.05); }
+
+                        &.is-selected {
+                            font-weight: 600;
+                            background: rgba(169, 78, 47, 0.08);
+                        }
+
+                        &:focus {
+                            outline: 2px solid #A94E2F;
+                            outline-offset: -2px;
+                        }
+                    }
+                }
+            }
+
+            // At narrow WIDGET widths: hide the native select, show the icon
+            @container (max-width: 600px) {
+                .topic-select { display: none; }
+                .topic-filter-compact { display: block; }
             }
         }
     }
@@ -804,8 +982,64 @@ unchanged.
 
 ### Link Function
 
-Unchanged from current — kept for any carousel parent that wraps this
-widget. Not relevant to the topic-dropdown feature.
+Two responsibilities now:
+
+1. The existing keyboard/carousel handling — unchanged, kept for any
+   carousel parent that wraps this widget.
+2. **New:** close the compact filter panel when the user clicks outside
+   it. Bound here because the link function already has `$elem` (the
+   widget root) for DOM work.
+
+```javascript
+function cdAnnouncementLink($scope, $elem, $attr, c) {
+    c.$announcement = jQuery($elem[0]);
+
+    // --- Existing carousel keyboard handling (unchanged) ---
+    c.$announcement.bind('keyup', function(e) {
+        if (e.keyCode === 13) {
+            var $focusedIndicator = c.$announcement.find('.carousel-indicator:focus');
+            var $targetedTabpanel = c.$announcement.find("#" + $focusedIndicator.attr('aria-controls'));
+            var $currentTargedTabpanel = c.$announcement.find('[tabindex="-1"]');
+            if ($currentTargedTabpanel) $currentTargedTabpanel.attr('tabindex', 0);
+            $focusedIndicator.trigger('click');
+            $targetedTabpanel.attr('tabindex', -1);
+        } else if (e.keyCode == 37 && jQuery(e.target).hasClass('carousel-indicator')) {
+            c.$announcement.find('.left.carousel-control').click();
+            c.$announcement.find('.carousel-indicator.active').focus();
+        } else if (e.keyCode == 39 && jQuery(e.target).hasClass('carousel-indicator')) {
+            c.$announcement.find('.right.carousel-control').click();
+            c.$announcement.find('.carousel-indicator.active').focus();
+        }
+    });
+
+    // --- New: close the compact filter panel on outside click ---
+    c.$announcement.on('click.topicFilter', function(e) {
+        if (!c.filterOpen) return;
+        // If the click landed outside the compact filter wrapper, close.
+        if (jQuery(e.target).closest('.topic-filter-compact').length === 0) {
+            $scope.$apply(function() { c.filterOpen = false; });
+        }
+    });
+
+    // Also close on Escape
+    c.$announcement.on('keyup.topicFilter', function(e) {
+        if (e.keyCode === 27 && c.filterOpen) {
+            $scope.$apply(function() { c.filterOpen = false; });
+        }
+    });
+
+    $scope.$on('$destroy', function() {
+        c.$announcement.off('.topicFilter');
+    });
+}
+```
+
+> Note: this listens within the widget root (`$elem`). A click on the
+> filter toggle itself is inside `.topic-filter-compact`, so it won't
+> self-close — the toggle's own `ng-click` handles open/close. Clicks on
+> the rest of the widget (or anywhere that bubbles to the root) close it.
+> If you need clicks *fully outside* the widget to close it too, bind to
+> `$document` instead — omitted here to avoid a global listener.
 
 ### Option Schema
 
@@ -888,10 +1122,19 @@ topics built on **both** the initial run and the `loadData` run:
   set to homepage default.
 - [ ] **Single fetch per change (no double skeleton)** — Changing the
   dropdown fetches exactly once: skeleton → data, with no second
-  skeleton flash a beat later. Confirms the URL-driven single-path
-  reload (Issue 2 fix).
-- [ ] **Browser back after switching** — Hitting back reloads the
-  previous selection's content AND re-syncs the dropdown to match.
+  skeleton flash a few seconds later, and NO second `controller init`
+  log (confirms no widget recompile). This is the core Issue 2 fix.
+- [ ] **No recompile on change** — The controller is NOT re-instantiated
+  on dropdown change (watch for a single `controller init` in console
+  across multiple changes).
+- [ ] **URL updates on change** — After selecting a topic, the address
+  bar reflects `origin_id`/`topic_id` (or `scope=all`), via `.replace()`
+  (no new history entry pushed).
+- [ ] **Shareable link** — Pasting a URL with `scope=all` or a
+  `topic_id` into a fresh tab loads that selection (server falls back to
+  URL params when no payload present) and the dropdown pre-selects it.
+- [ ] **Refresh persists selection** — Refreshing the page on a selected
+  topic reloads that topic (URL fallback).
 
 **Edge cases:**
 - [ ] **Page hosts widget but no topic uses it as template** —
@@ -906,14 +1149,34 @@ topics built on **both** the initial run and the `loadData` run:
 - [ ] **Alphabetical order verified** — Topic names appear A→Z below
   the two fixed options.
 
+**Responsive filter (narrow width):**
+- [ ] **Wide widget** — Native `<select>` shows; filter icon hidden.
+- [ ] **Narrow widget (below 600px container width)** — `<select>`
+  hidden; `fa-filter` icon shows. Confirm it keys off WIDGET width, not
+  viewport (test by placing the widget in a narrow column on a wide
+  screen — it should still collapse).
+- [ ] **Tap filter icon** — Panel opens listing all options; current
+  selection shows the check + highlight.
+- [ ] **Select an option from panel** — Panel closes, content reloads,
+  same URL/`onTopicChange` behavior as the select.
+- [ ] **Click outside panel** — Panel closes without changing selection.
+- [ ] **Escape key** — Panel closes.
+- [ ] **Selection persists across the breakpoint** — Pick a topic while
+  narrow, widen the widget; the `<select>` reflects the same selection
+  (both bind `c.selectedTopic`).
+
 ---
 
 ## Open Items / Out of Scope
 
-- **Browser back/forward syncing** — ✅ Now handled. The
-  `$locationChangeSuccess` watcher (added to fix the double-fetch in
-  Issue 2) means back/forward navigation between selections reloads
-  content and re-syncs the dropdown via `preselectFromUrl()`.
+- **Browser back/forward syncing** — Not handled. Since reloads are now
+  payload-driven (not URL-driven) and there's no `$locationChangeSuccess`
+  watcher, hitting back/forward changes the URL but does not reload
+  content. If wanted, add a watcher that calls
+  `loadAnnouncements(selectionFromUrl())` on `$locationChangeSuccess` —
+  but guard it so it doesn't fire on the writes from `onTopicChange`
+  itself (e.g. compare against the current selection before reloading).
+  Deferred to keep the single clean reload path.
 - **All Topics detail URLs** — Clicking into an announcement from the
   All Topics view opens it standalone (no context persisted). If we
   want back-navigation to land on All Topics, stamp `scope=all` (and
