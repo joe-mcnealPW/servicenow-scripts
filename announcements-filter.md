@@ -630,9 +630,14 @@ function cdAnnouncementController($scope, $sce, $rootScope, $timeout, i18n, cdAn
         var params = new URLSearchParams(window.location.search);
 
         // Preserve unrelated params (e.g. id=) and only touch our three.
-        selection.origin_id ? params.set('origin_id', selection.origin_id) : params.delete('origin_id');
-        selection.topic_id  ? params.set('topic_id', selection.topic_id)   : params.delete('topic_id');
-        selection.scope     ? params.set('scope', selection.scope)         : params.delete('scope');
+        if (selection.origin_id) { params.set('origin_id', selection.origin_id); }
+        else                     { params.delete('origin_id'); }
+
+        if (selection.topic_id)  { params.set('topic_id', selection.topic_id); }
+        else                     { params.delete('topic_id'); }
+
+        if (selection.scope)     { params.set('scope', selection.scope); }
+        else                     { params.delete('scope'); }
 
         var qs = params.toString();
         var newUrl = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
