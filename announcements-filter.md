@@ -8,8 +8,8 @@ sits in the top-right of the widget header and offers three modes:
 3. **Any specific topic** — every topic whose template page hosts an instance of this widget
 
 Selecting an option sends the choice through the `get()` payload to re-fetch
-(no reload), and mirrors it into the address bar via the History API for
-shareable links.
+(no reload). The URL is not updated on selection — clicking "View All
+Announcements" carries the selection to the full page via normal navigation.
 
 ---
 
@@ -79,40 +79,45 @@ controller → SP reacts to the pushed URL change → recompiles the widget →
 fresh controller runs its own initial load (the second skeleton, seconds later).
 
 **Fix (final architecture):** Decouple the content fetch from the URL
-entirely.
+entirely, and **don't write the URL at all** on dropdown change.
 
 1. **The client sends the selection through the `get()` payload** —
    `c.server.get({action:'loadData', origin_id, topic_id, scope})`. The
    server reads `input.origin_id` / `input.topic_id` / `input.scope`
    first, falling back to `$sp.getParameter(...)` only when the payload
-   is absent (fresh page load, refresh, shareable link). So the in-session
-   reload has **zero URL dependency** — nothing about the fetch touches
-   `$location`, so SP has no reason to recompile.
+   is absent (fresh page load, full-page navigation). So the in-session
+   reload has **zero URL dependency**.
 2. **`getContent` takes an optional `topicIdOverride` arg** (5th param,
    back-compatible) so it no longer needs `$sp.getParameter('topic_id')`
    when the caller supplies the value. The All Topics loop already passed
    `topic_id` explicitly via `getContentForWidgetInstance`, so it was
    already URL-independent.
-3. **The address bar is updated separately, write-only**, via the browser
-   **History API** (`window.history.replaceState`) — deliberately *not*
-   Angular's `$location`. On this instance, **any** `$location` write
-   (even `$location.search(obj).replace()`) makes Service Portal recompile
-   the whole widget — confirmed in testing. `history.replaceState` changes
-   the URL without going through Angular's location pipeline, so SP never
-   sees a change event and never recompiles. Fresh loads still read the
-   real URL via `$sp.getParameter`, so shareable/refreshable links work.
+3. **The URL is NOT updated on dropdown change.** Testing confirmed
+   Service Portal recompiles the widget whenever `origin_id` or `topic_id`
+   appears in the URL — regardless of how the URL was written (`$location`
+   vs raw `history.replaceState`). The trigger is the **param value being
+   present**, not the write mechanism. So we removed the URL write
+   entirely: selection lives in controller state only.
 
 Net result: one explicit reload path (`loadAnnouncements(selection)`),
-no `$location` use at all, no recompile, no double skeleton.
+no URL touched mid-session, no recompile, no double skeleton.
+
+**Tradeoff accepted:** the selection doesn't survive refresh and isn't
+shareable via URL — refreshing reverts to Agency Wide. The View All
+button *does* carry the selection (full-page navigation, recompile-on-load
+is the intended behavior there). If shareable in-page selection becomes
+needed, the path would be namespaced URL keys SP doesn't recognize
+(e.g. `annTopic`/`annOrigin`) — deferred.
 
 > Evolution of this fix: (1) first attempt kept the URL as the value
 > carrier with atomic write + `.replace()` — still recompiled, because SP
-> reacts to the `$location` change regardless. (2) Moving the value into
-> the `get()` payload removed the *fetch's* dependency on the URL, but the
+> reacts to the `$location` change. (2) Moving the value into the
+> `get()` payload removed the *fetch's* dependency on the URL, but the
 > leftover `$location` write for shareability **still** recompiled. (3)
-> Final: bypass `$location` entirely for the URL mirror using
-> `history.replaceState`. The fetch is payload-driven; the URL is updated
-> through the raw History API so Angular/SP never reacts.
+> Switched to raw `history.replaceState` — still recompiled, because SP
+> watches the URL content, not the write mechanism. (4) Final: drop the
+> URL write entirely. Selection is session-only; View All carries it via
+> normal full-page navigation.
 
 ---
 
@@ -124,7 +129,7 @@ Page load
   ▼
 Server runs once (no input)
   ├─ Resolves origin_id/topic_id/scope: input.* → URL fallback
-  ├─ Sets instance_id, viewAllURL, isLoading=true
+  ├─ Sets instance_id, default_origin_id, isLoading=true
   ├─ Builds data.topics  ← list of topics whose template page hosts this widget
   └─ Returns early (no input.action)
   │
@@ -151,12 +156,13 @@ Client receives data.items → buildTopicOptions() → preselectFromUrl() (initi
   │
   ▼
 User picks an option from dropdown / filter panel
+  └─ loadAnnouncements(selection)  ← selection sent in get() PAYLOAD only
+       → server reads input.* → no URL touched → no recompile → one skeleton → data
   │
-  ├─ loadAnnouncements(selection)  ← selection sent in get() PAYLOAD (no URL dependency)
-  │    └─ c.server.get({ action:'loadData', origin_id, topic_id, scope })
-  │       → server reads input.* → no recompile → one skeleton → data
-  │
-  └─ history.replaceState(...)  ← URL mirror, write-only, bypasses $location (no recompile)
+  ▼
+User clicks "View All" → c.getViewAllUrl() builds destination from c.selectedTopic
+  └─ Full-page navigation to ?id=agency_announcements&... carrying the selection
+     (origin_id/topic_id/scope) — destination page reads URL on its own initial load
 ```
 
 ---
@@ -373,11 +379,6 @@ merges the results.
     // Default origin_id for the "Agency Wide" dropdown option (homepage instance)
     data.default_origin_id = 'ace327ce47a67e10d1dbf8ba436d439b';
 
-    data.viewAllURL = '?id=agency_announcements&origin_id=' + data.instance_id;
-    if (data.topic_id) {
-        data.viewAllURL += '&topic_id=' + data.topic_id;
-    }
-
     // Build the topic dropdown list on EVERY run.
     // NOTE: this must NOT be guarded by `if (!input)`. The client controller's
     // loadData round-trip replaces c.data with this response object, so if
@@ -477,11 +478,10 @@ to Agency Wide and to a topic (or to multiple topics), it shows once.
 ### Client Controller
 
 Adds: dropdown state (Agency Wide + All Topics + topics), selection
-handler, and a responsive icon/panel for narrow widths. The selection
-is sent to the server through the **`get()` payload** (not the URL), and
-the address bar is updated separately via the **browser History API**
-(`history.replaceState`) — deliberately *not* Angular's `$location`,
-because any `$location` write recompiles the widget on this instance.
+handler, a responsive icon/panel for narrow widths, and a selection-aware
+"View All" URL builder. The selection is sent to the server through the
+**`get()` payload** (not the URL); the URL is **not** updated on dropdown
+change to avoid Service Portal's recompile-on-`origin_id`-change reaction.
 Also fixes the missing `$rootScope` injection from the existing code.
 
 ```javascript
@@ -603,6 +603,35 @@ function cdAnnouncementController($scope, $sce, $rootScope, $timeout, i18n, cdAn
         return moment(dt).format('MMM DD, YYYY');
     };
 
+    // Build the "View All Announcements" URL from the current selection. The
+    // destination is the full agency_announcements page, which is itself an
+    // instance of this same widget — so we pass selection params via the URL
+    // and let the destination page's server script read them on initial load
+    // (via $sp.getParameter). Three cases:
+    //
+    //   Agency Wide    → ?id=agency_announcements&origin_id=<homepage default>
+    //   Specific topic → ?id=agency_announcements&origin_id=<topic instance>&topic_id=<topic>
+    //   All Topics     → ?id=agency_announcements&scope=all
+    //
+    // NOTE: passing origin_id/topic_id here is fine even though they trigger SP's
+    // recompile reaction — this is a full-page navigation (a new request), not
+    // an in-session URL update, so "recompile on URL change" is exactly what we
+    // want. The recompile problem only applies to mid-session $location writes.
+    c.getViewAllUrl = function() {
+        if (!c.selectedTopic) {
+            // Fallback: Agency Wide
+            return '?id=agency_announcements&origin_id=' + c.data.default_origin_id;
+        }
+        if (c.selectedTopic.scope === 'all') {
+            return '?id=agency_announcements&scope=all';
+        }
+        var url = '?id=agency_announcements&origin_id=' + c.selectedTopic.origin_id;
+        if (c.selectedTopic.topic_id) {
+            url += '&topic_id=' + c.selectedTopic.topic_id;
+        }
+        return url;
+    };
+
     c.onTopicChange = function() {
         var selection = {
             origin_id: c.selectedTopic.origin_id || null,
@@ -610,39 +639,17 @@ function cdAnnouncementController($scope, $sce, $rootScope, $timeout, i18n, cdAn
             scope: c.selectedTopic.scope || null
         };
 
-        // 1) Fetch via the payload — the server reads input.* (NOT the URL), so
-        //    the content load has zero URL dependency. This is the single,
-        //    explicit reload path.
+        // Payload-driven fetch — server reads input.*, no URL touched at all.
+        // The URL is NOT mirrored: testing showed Service Portal recompiles the
+        // widget whenever `origin_id` or `topic_id` appears in the URL,
+        // regardless of how the URL was written ($location vs raw History API).
+        // The trigger is the param values themselves, not the write mechanism.
+        // Tradeoff: selection does not survive refresh and is not shareable via
+        // URL — it lives in controller state only. Shareable links would have
+        // required namespaced URL keys (`annTopic`/`annOrigin`) SP doesn't
+        // recognize; deferred unless explicitly needed.
         loadAnnouncements(selection);
-
-        // 2) Mirror the selection into the address bar for shareable/refreshable
-        //    links — using the browser History API directly, NOT Angular's
-        //    $location. On this instance ANY $location write (even .replace())
-        //    triggers Service Portal to recompile the whole widget. history.
-        //    replaceState updates the URL without firing Angular's location
-        //    change pipeline, so SP never reacts. Fresh loads still read the
-        //    real URL via $sp.getParameter, so shareable links keep working.
-        updateUrlSilently(selection);
     };
-
-    function updateUrlSilently(selection) {
-        if (!window.history || !window.history.replaceState) { return; }
-        var params = new URLSearchParams(window.location.search);
-
-        // Preserve unrelated params (e.g. id=) and only touch our three.
-        if (selection.origin_id) { params.set('origin_id', selection.origin_id); }
-        else                     { params.delete('origin_id'); }
-
-        if (selection.topic_id)  { params.set('topic_id', selection.topic_id); }
-        else                     { params.delete('topic_id'); }
-
-        if (selection.scope)     { params.set('scope', selection.scope); }
-        else                     { params.delete('scope'); }
-
-        var qs = params.toString();
-        var newUrl = window.location.pathname + (qs ? '?' + qs : '') + window.location.hash;
-        window.history.replaceState({}, '', newUrl);
-    }
 
     c.containerStyle = {
         background: c.options.background_color || 'rgba(255, 255, 255, .2)'
@@ -682,7 +689,7 @@ function cdAnnouncementController($scope, $sce, $rootScope, $timeout, i18n, cdAn
 **Fixes folded in while we're here:**
 
 - `$rootScope` is now actually injected (it was used but undeclared in the original).
-- URL updates use the browser History API (`history.replaceState`), not Angular's `$location` — see Issue 2.
+- URL is not touched on selection (see Issue 2 fix).
 - The original kept `i18n`, `cdAnalytics`, `$timeout` as injections — preserved in case other code in the page references them, but they're still unused.
 
 ### HTML Template
@@ -787,7 +794,7 @@ Portal SASS compiler can't be relied on to support `@container`.
         </div>
 
         <div class="view-all" ng-if="data.items.length > 0 && options.max_rows">
-            <a class="title-small" ng-href="{{data.viewAllURL}}">
+            <a class="title-small" ng-href="{{c.getViewAllUrl()}}">
                 View All Announcements <i class="fa fa-arrow-right"></i>
             </a>
         </div>
@@ -1175,15 +1182,30 @@ topics built on **both** the initial run and the `loadData` run:
 - [ ] **No recompile on change** — The controller is NOT re-instantiated
   on dropdown change (watch for a SINGLE `controller init` in console
   across multiple changes, and NO second skeleton flash seconds later).
-- [ ] **URL updates on change without recompile** — After selecting a
-  topic, the address bar reflects `origin_id`/`topic_id` (or `scope=all`)
-  via `history.replaceState`, and this does NOT trigger a widget
-  recompile (the whole reason for using the History API over `$location`).
-- [ ] **Shareable link** — Pasting a URL with `scope=all` or a
-  `topic_id` into a fresh tab loads that selection (server falls back to
-  URL params when no payload present) and the dropdown pre-selects it.
-- [ ] **Refresh persists selection** — Refreshing the page on a selected
-  topic reloads that topic (URL fallback).
+- [ ] **URL unchanged on selection** — Address bar does NOT change when
+  the dropdown is used; selection lives in controller state only.
+- [ ] **Refresh reverts to default** — Refreshing the page after picking
+  a topic resets to Agency Wide (intentional tradeoff; URL is not used
+  to persist in-page selection).
+- [ ] **Fresh load with URL params still works** — A URL like
+  `?id=...&topic_id=<id>&origin_id=<id>` (e.g. from a View All link, or
+  hand-crafted) loads correctly on initial render via the server's URL
+  fallback, and `preselectFromUrl()` matches the dropdown to it.
+
+**View All button (selection-aware):**
+- [ ] **Agency Wide selected → View All** — URL is
+  `?id=agency_announcements&origin_id=<homepage default>` and the
+  destination page shows the full Agency Wide list with "Agency Wide"
+  selected in its dropdown.
+- [ ] **Specific topic selected → View All** — URL is
+  `?id=agency_announcements&origin_id=<topic instance>&topic_id=<topic>`
+  and the destination shows that topic's full list with the topic
+  pre-selected in its dropdown.
+- [ ] **All Topics selected → View All** — URL is
+  `?id=agency_announcements&scope=all` and the destination shows the
+  merged list with "All Topics" pre-selected.
+- [ ] **View All is hidden when `max_rows` is not set** — same as
+  current behavior (the link only renders when the list is truncated).
 
 **Edge cases:**
 - [ ] **Page hosts widget but no topic uses it as template** —
@@ -1225,14 +1247,15 @@ topics built on **both** the initial run and the `loadData` run:
 
 ## Open Items / Out of Scope
 
-- **Browser back/forward syncing** — Not handled. Since reloads are now
-  payload-driven (not URL-driven) and there's no `$locationChangeSuccess`
-  watcher, hitting back/forward changes the URL but does not reload
-  content. If wanted, add a watcher that calls
-  `loadAnnouncements(selectionFromUrl())` on `$locationChangeSuccess` —
-  but guard it so it doesn't fire on the writes from `onTopicChange`
-  itself (e.g. compare against the current selection before reloading).
-  Deferred to keep the single clean reload path.
+- **Shareable / refreshable in-page selection** — Not supported.
+  Selecting a topic doesn't update the URL, so refresh reverts to Agency
+  Wide and you can't share a URL pointing at a specific selection within
+  the embedded widget. Testing showed Service Portal recompiles the
+  widget whenever `origin_id` or `topic_id` is in the URL (any write
+  method — `$location` or raw History API). If this becomes needed, the
+  workaround is namespaced URL keys SP doesn't recognize, e.g.
+  `annTopic` and `annOrigin`, with the server reading those on initial
+  load. The View All button does carry the selection — see test cases.
 - **All Topics detail URLs** — Clicking into an announcement from the
   All Topics view opens it standalone (no context persisted). If we
   want back-navigation to land on All Topics, stamp `scope=all` (and
