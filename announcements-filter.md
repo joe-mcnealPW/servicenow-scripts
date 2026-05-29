@@ -1273,3 +1273,224 @@ topics built on **both** the initial run and the `loadData` run:
 - **Hardcoded homepage `origin_id`** — still hardcoded in both the
   server script and as the default in the dropdown. A future change
   could promote this to a system property or widget option.
+
+
+  # Updates
+
+  # Empty-Topic Filtering — Implementation Steps
+
+Three files to change. No template, SCSS, or link-function edits in this round.
+
+---
+
+## 1. Script Include — `cd_ContentDeliveryExtended`
+
+**Replace the entire `getTopicsForWidget` method** with this version. The
+signature gains an optional `opts` param, and a new Step 3 filters empties:
+
+```javascript
+/**
+ * @param {string} widgetSysId - sys_id of the sp_widget record
+ * @param {object} [opts] - optional flags
+ * @param {boolean} [opts.requireContent=false] - when true, drops topics
+ *        with zero active announcements (uses getContentForWidgetInstance
+ *        for true parity with what the dropdown selection will load).
+ *        Adds N small content queries — fine for initial load only.
+ */
+getTopicsForWidget: function (widgetSysId, opts) {
+    if (!widgetSysId || typeof widgetSysId !== 'string') {
+        return [];
+    }
+    var requireContent = !!(opts && opts.requireContent);
+
+    // Step 1: walk sp_instance → sp_column → sp_row → sp_container → sp_page
+    // (unchanged from before)
+    var pageToInstance = {};
+    var inst = new GlideRecord('sp_instance');
+    inst.addQuery('sp_widget', widgetSysId);
+    inst.query();
+
+    while (inst.next()) {
+        var instanceId = inst.getValue('sys_id');
+        var columnId = inst.getValue('sp_column');
+        if (!columnId) continue;
+
+        var col = new GlideRecord('sp_column');
+        if (!col.get(columnId)) continue;
+        var rowId = col.getValue('sp_row');
+        if (!rowId) continue;
+
+        var row = new GlideRecord('sp_row');
+        if (!row.get(rowId)) continue;
+        var containerId = row.getValue('sp_container');
+        if (!containerId) continue;
+
+        var container = new GlideRecord('sp_container');
+        if (!container.get(containerId)) continue;
+        var pageId = container.getValue('sp_page');
+        if (!pageId) continue;
+
+        if (!pageToInstance[pageId]) {
+            pageToInstance[pageId] = instanceId;
+        }
+    }
+
+    var pageIds = Object.keys(pageToInstance);
+    if (pageIds.length === 0) {
+        return [];
+    }
+
+    // Step 2: find every topic whose template is one of those pages
+    var topics = [];
+    var topicGr = new GlideRecord('topic');
+    topicGr.addQuery('template', 'IN', pageIds.join(','));
+    topicGr.orderBy('name');
+    topicGr.query();
+
+    while (topicGr.next()) {
+        var templatePageId = topicGr.getValue('template');
+        var topicSysId = topicGr.getValue('sys_id');
+        var anchorInstanceId = pageToInstance[templatePageId];
+
+        // Step 3 (NEW): drop topics with no active announcements
+        if (requireContent) {
+            var items = cd_ContentDelivery.getContentForWidgetInstance(
+                anchorInstanceId, topicSysId, null, null
+            ) || [];
+            if (items.length === 0) {
+                continue;
+            }
+        }
+
+        topics.push({
+            sys_id: topicSysId,
+            name: topicGr.getDisplayValue('name') || topicGr.getValue('name') || '',
+            instance_id: anchorInstanceId
+        });
+    }
+
+    return topics;
+},
+```
+
+**What changed vs your existing version:**
+
+- Method signature: `getTopicsForWidget(widgetSysId)` → `getTopicsForWidget(widgetSysId, opts)`
+- Added `var requireContent = !!(opts && opts.requireContent);` at the top
+- In the topic loop, replaced the inline `topics.push(...)` with:
+  pull `topicSysId` and `anchorInstanceId` into local vars first,
+  run the optional content check that `continue`s on empty,
+  then push.
+
+---
+
+## 2. Widget Server Script
+
+**Find this block** (the one that builds `data.topics` on every run):
+
+```javascript
+// Build the topic dropdown list on EVERY run.
+// NOTE: this must NOT be guarded by `if (!input)`. ...
+data.topics = new cd_ContentDeliveryExtended().getTopicsForWidget('d0dd830647ae3e10d1dbf8ba436d4314');
+gs.info('[AgencyAnn] topics built — count: ' + ...);
+```
+
+**Replace it with:**
+
+```javascript
+// Build the topic dropdown list ONLY on initial load (`!input`).
+// Filtered to topics that actually have active announcements (requireContent: true).
+// On loadData round-trips we leave data.topics unset; the client preserves the
+// list across the c.data overwrite so options stay stable AND we don't re-run
+// the per-topic content query on every dropdown change.
+if (!input) {
+    data.topics = new cd_ContentDeliveryExtended().getTopicsForWidget(
+        'd0dd830647ae3e10d1dbf8ba436d4314',
+        { requireContent: true }
+    );
+    gs.info('[AgencyAnn] topics built (initial, content-filtered) — count: ' + (data.topics ? data.topics.length : 'null'));
+} else {
+    gs.info('[AgencyAnn] loadData run — topics NOT rebuilt (client preserves the initial list)');
+}
+```
+
+Nothing else in the server script changes.
+
+---
+
+## 3. Widget Client Controller
+
+Two small edits in the controller.
+
+### Edit A — Add the cache variable near the top
+
+**Find:**
+
+```javascript
+var initialized = false;
+
+console.log('[AgencyAnn] controller init — c.data.topics:', c.data.topics);
+```
+
+**Replace with:**
+
+```javascript
+var initialized = false;
+
+// Cache of the filtered topic list from the initial server run. The server
+// only computes this list (with empty-topic filtering) on initial load —
+// subsequent loadData round-trips do NOT include data.topics in the response,
+// so we preserve it here and restore it after each c.data overwrite.
+var cachedTopics = (c.data && c.data.topics) ? c.data.topics : [];
+
+console.log('[AgencyAnn] controller init — c.data.topics:', c.data.topics, '| cached count:', cachedTopics.length);
+```
+
+### Edit B — Restore the cache after `c.data` overwrite
+
+**Find inside `loadAnnouncements`:**
+
+```javascript
+c.server.get(payload).then(function(response) {
+    console.log('[AgencyAnn] loadData response.data.topics:', response.data.topics);
+    c.data = response.data;
+
+    // Always rebuild options against the freshly resolved data.
+    buildTopicOptions();
+```
+
+**Replace with:**
+
+```javascript
+c.server.get(payload).then(function(response) {
+    console.log('[AgencyAnn] loadData response.data.topics:', response.data.topics);
+    c.data = response.data;
+
+    // Restore the cached topic list — the server intentionally omits it on
+    // loadData runs to avoid re-running the content-filter cost. If the
+    // response DID include topics (initial load only), prefer that.
+    if (c.data.topics && c.data.topics.length) {
+        cachedTopics = c.data.topics;
+    } else {
+        c.data.topics = cachedTopics;
+    }
+
+    // Always rebuild options against the freshly resolved data.
+    buildTopicOptions();
+```
+
+---
+
+## How to verify it's working
+
+1. Open the page and watch the System Logs filtered to `AgencyAnn` — you
+   should see **`topics built (initial, content-filtered)`** once on page
+   load, and **`topics NOT rebuilt`** on every dropdown change after.
+2. Confirm topics with zero active announcements are absent from the
+   dropdown.
+3. In the browser console after a dropdown change, `c.data.topics` should
+   still be a populated array (restored from cache), and the dropdown
+   options should remain stable.
+4. Add an announcement to a previously-empty topic, reload the page —
+   that topic should now appear in the dropdown (initial-load filter
+   re-runs).
