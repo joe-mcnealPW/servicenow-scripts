@@ -2970,3 +2970,352 @@ topics built on **both** the initial run and the `loadData` run:
 - **Hardcoded homepage `origin_id`** — still hardcoded in both the
   server script and as the default in the dropdown. A future change
   could promote this to a system property or widget option.
+
+
+  # Unified Custom Dropdown — Implementation Steps
+
+Replaces the native `<select>` on the wide layout with a custom labeled
+button that opens the **same panel** the narrow (icon) layout already
+opens. Net effect: the open dropdown looks identical at all widths.
+
+Preserves your local changes:
+
+- `data.filter_available` gate (widget option boolean) — kept and combined
+  with `data.topics.length > 0`
+- `.topic-select-container` wrapper + `"Filter:"` label on wide
+- `.view-options` wrapper + SVG funnel icon + `"Filter"` text label on narrow
+- `Sky-400` / `Sky-500` color scheme (no terracotta)
+- Panel `max-height: 500px; overflow-y: auto`, `min-width: 250px`
+- Selected option: filled `$Sky-400` background with white text + white check
+- `ng-disabled="data.isLoading"` on triggers
+
+Four files to change. No script include edits in this round.
+
+---
+
+## 1. Widget Server Script
+
+Add the `filter_available` option read so the template gate works. Place
+this near the other `data.*` setup at the top of the IIFE:
+
+```javascript
+// Widget option (boolean) — admin-set toggle on the widget instance for
+// whether the topic filter UI should show on this placement at all.
+// The template AND-s this with data.topics.length > 0 (the dynamic
+// "anything to actually filter by?" check from the empty-topic filtering).
+data.filter_available = !!options.filter_available;
+```
+
+---
+
+## 2. Widget Option Schema
+
+Add the new option so admins can toggle it on each instance. Append this
+to the existing `option_schema` array:
+
+```json
+{
+    "name": "filter_available",
+    "section": "Presentation",
+    "label": "Show Topic Filter",
+    "type": "boolean"
+}
+```
+
+---
+
+## 3. HTML Template
+
+**Replace the entire `.topic-selector` block** with this version. The wide
+layout keeps the "Filter:" label and the `.topic-select-container` wrapper —
+the only change is that the `<select>` becomes a labeled button that opens
+the shared panel. The narrow layout is unchanged from what you have.
+
+```html
+<!-- Topic selector — gated by BOTH the widget option (filter_available)
+     AND the dynamic check that there's at least one topic to pick. -->
+<div class="topic-selector"
+     ng-if="data.filter_available && data.topics && data.topics.length > 0">
+
+    <!-- Wide layout: "Filter:" label + custom button trigger (replaces <select>) -->
+    <div class="topic-select-container" ng-if="!c.state.compact">
+        <span class="title-medium">Filter:</span>
+        <button type="button"
+                class="topic-select"
+                ng-click="c.toggleFilter()"
+                ng-class="{ 'is-open': c.filterOpen }"
+                ng-disabled="data.isLoading"
+                aria-haspopup="true"
+                aria-expanded="{{c.filterOpen}}"
+                aria-label="Filter announcements by topic">
+            <span class="topic-select-label">{{c.selectedTopic.label}}</span>
+            <svg class="topic-select-chevron" width="12" height="8"
+                 viewBox="0 0 12 8" fill="none"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M1 1L6 6L11 1" stroke="currentColor"
+                      stroke-width="2" stroke-linecap="round"
+                      stroke-linejoin="round"/>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Narrow layout: SVG funnel + "Filter" label + popover panel
+         (unchanged from your local version) -->
+    <div class="topic-filter-compact" ng-if="c.state.compact">
+        <button type="button"
+                class="view-options filter-toggle"
+                ng-click="c.toggleFilter()"
+                ng-disabled="data.isLoading"
+                aria-haspopup="true"
+                aria-expanded="{{c.filterOpen}}"
+                aria-label="Filter announcements by topic">
+            <svg width="25" height="24" viewBox="0 0 25 24" fill="none"
+                 xmlns="http://www.w3.org/2000/svg">
+                <path d="M0.5 6H24.5M24.5 18L0.5 18M4.5 12L20.5 12"
+                      stroke="white" stroke-width="2"/>
+            </svg>
+            <span class="title-extra-small">Filter</span>
+        </button>
+    </div>
+
+    <!-- Shared options panel — used by BOTH wide and narrow triggers -->
+    <div class="filter-panel" ng-if="c.filterOpen" role="menu">
+        <button type="button"
+                class="filter-option"
+                role="menuitemradio"
+                ng-repeat="opt in c.topicOptions"
+                ng-class="{ 'is-selected': opt === c.selectedTopic }"
+                aria-checked="{{opt === c.selectedTopic}}"
+                ng-click="c.selectTopic(opt)">
+            <i class="fa fa-check" ng-if="opt === c.selectedTopic"></i>
+            <span class="title-small">{{opt.label}}</span>
+        </button>
+    </div>
+</div>
+```
+
+**What changed vs your local version:**
+
+- The wide `<select>` element is gone, replaced by a `<button class="topic-select">`
+  that reuses the same class name (so most of your existing wide SCSS still
+  applies). The button contains `.topic-select-label` (the current selection
+  label) and an inline SVG chevron.
+- The shared `.filter-panel` moves OUT of `.topic-filter-compact` and becomes
+  a direct sibling of both triggers inside `.topic-selector` — so the wide
+  trigger can open the same panel.
+- Both triggers now have `ng-disabled="data.isLoading"` (you already had it
+  on both; preserved).
+- The narrow layout markup is unchanged.
+
+---
+
+## 4. SCSS
+
+Three changes inside the `.topic-selector` block.
+
+### Edit A — Update `.topic-select` to work as a button
+
+**Find your existing `.topic-select` block** (inside `.topic-select-container`)
+and replace it with this version. Keeps your Sky-500 color scheme; adds
+button-specific reset rules and chevron handling:
+
+```scss
+.topic-select {
+    // Reset button defaults so it looks/behaves like the old <select>
+    appearance: none;
+    -webkit-appearance: none;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+
+    // Existing select-style look (kept from your local version)
+    background: white;
+    color: $Sky-500;
+    border: 1px solid $Sky-500;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    min-width: 180px;
+
+    // Layout for label + chevron
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+
+    .topic-select-label {
+        flex: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .topic-select-chevron {
+        flex-shrink: 0;
+        transition: transform 0.15s ease;
+    }
+
+    &:hover:not(:disabled) {
+        background: #fafafa;
+    }
+
+    &:focus {
+        outline: 2px solid $Sky-500;
+        outline-offset: 2px;
+    }
+
+    &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    // Rotate the chevron when the panel is open
+    &.is-open .topic-select-chevron {
+        transform: rotate(180deg);
+    }
+}
+
+// The old `option { ... }` block is no longer needed — there are no <option>
+// elements anymore. Remove it if you still have it.
+```
+
+### Edit B — Move `.filter-panel` out of `.topic-filter-compact`
+
+The panel is now shared between both triggers, so it needs to be a
+sibling of both — not nested inside the compact wrapper.
+
+**In your existing SCSS, find your `.filter-panel { ... }` block inside
+`.topic-filter-compact { ... }`.** Cut it out of there and paste it as a
+direct child of `.topic-selector` (sibling of `.topic-select-container`
+and `.topic-filter-compact`). The styles themselves don't change at all
+— just the nesting.
+
+After the move, the structure should look like:
+
+```scss
+.topic-selector {
+    flex-shrink: 0;
+    position: relative;
+
+    .topic-select-container { /* ... unchanged ... */
+        .topic-select { /* updated per Edit A */ }
+    }
+
+    .topic-filter-compact { /* ... unchanged, but .filter-panel removed from inside ... */
+        .view-options { /* ... */ }
+        .filter-toggle { /* ... */ }
+        // .filter-panel was here — now lifted out (see below)
+    }
+
+    // Shared panel — used by BOTH wide and narrow triggers
+    .filter-panel {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        z-index: 10;
+        min-width: 250px;
+        max-height: 500px;
+        overflow-y: auto;
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+        padding: 6px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+
+        .filter-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            text-align: left;
+            background: transparent;
+            border: none;
+            padding: 5px 10px;
+            font-size: 14px;
+            color: $Sky-400;
+            cursor: pointer;
+
+            .fa-check {
+                font-size: 12px;
+                color: white;
+            }
+
+            // Reserve space for the check so labels align whether or not selected
+            span { flex: 1; }
+
+            &:hover { background: rgba(0, 0, 0, 0.05); }
+
+            &.is-selected {
+                color: white;
+                background: $Sky-400;
+            }
+
+            &:focus {
+                outline: 2px solid #A94E2F;
+                outline-offset: -2px;
+            }
+        }
+    }
+}
+```
+
+(The contents of `.filter-panel` and `.filter-option` above are exactly
+what you already have — they just live one level up in the nesting now.)
+
+### Edit C — `position: relative` on the topic-selector
+
+This is probably already there from your local version, but double-check.
+The panel uses `position: absolute` and needs `.topic-selector` as the
+positioning context. If the wide layout's panel ends up in the wrong
+place, this is the first thing to check.
+
+```scss
+.topic-selector {
+    position: relative;  // <-- required
+    // ...
+}
+```
+
+---
+
+## 5. (Verify) Link Function — outside-click scope
+
+Your link function should already close the panel on outside click. The
+selector for "inside the dropdown" needs to be `.topic-selector` (the
+shared container), not `.topic-filter-compact` (which is now only the
+narrow trigger wrapper).
+
+**Find:**
+
+```javascript
+if (jQuery(e.target).closest('.topic-filter-compact').length === 0) {
+```
+
+**Replace with:**
+
+```javascript
+if (jQuery(e.target).closest('.topic-selector').length === 0) {
+```
+
+Both triggers AND the shared panel live inside `.topic-selector`, so this
+keeps "click on either trigger or in the panel = don't close."
+
+---
+
+## How to verify it's working
+
+1. **Wide widget, filter on** — "Filter:" label followed by a white button
+   showing the current selection label + chevron. Sky-500 border + text.
+2. **Click the button** — same Sky-styled panel opens that the narrow icon
+   already opens. Selected option is filled Sky-400 with white text + check.
+   Chevron rotates 180°.
+3. **Pick a different option** — panel closes, button label updates, content
+   reloads.
+4. **Narrow widget** — unchanged: SVG funnel + "Filter" label opens the
+   same panel.
+5. **`filter_available = false` on the instance** — the entire
+   `.topic-selector` is absent from the DOM at any width.
+6. **No `<select>` element** in the DOM anywhere.
+7. **During load** (`data.isLoading` true) — trigger is disabled, dimmed.
+8. **Outside-click / Escape** — panel closes without changing selection.
