@@ -22,6 +22,39 @@ filtered list.
 
 -----
 
+## Client URL Code 
+``` javascript
+// Build the detail-page URL for a list item, carrying the current
+// selection context so the detail page can show "from <topic>" framing
+// or wire up a back-link that lands the user where they came from.
+//
+// Three cases mirror getViewAllUrl():
+//   Agency Wide    → ?id=agency_announcement&sys_id=<item>&origin_id=<homepage default>
+//   Specific topic → ?id=agency_announcement&sys_id=<item>&origin_id=<topic instance>&topic_id=<topic>
+//   All Topics     → ?id=agency_announcement&sys_id=<item>&scope=all
+//
+// Same caveat as View All: passing origin_id/topic_id here is fine
+// because this is a full-page navigation (new request), not a mid-session
+// URL update. The recompile-on-URL-change problem only applies to
+// mid-session $location writes.
+c.getItemUrl = function(item) {
+    var base = '?id=agency_announcement&sys_id=' + item.sys_id;
+    if (!c.selectedTopic) {
+        return base + '&origin_id=' + c.data.default_origin_id;
+    }
+    if (c.selectedTopic.scope === 'all') {
+        return base + '&scope=all';
+    }
+    var url = base + '&origin_id=' + c.selectedTopic.origin_id;
+    if (c.selectedTopic.topic_id) {
+        url += '&topic_id=' + c.selectedTopic.topic_id;
+    }
+    return url;
+};
+
+
+```
+
 ## HTML Template
 
 ```html
