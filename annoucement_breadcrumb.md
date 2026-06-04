@@ -74,11 +74,7 @@ api.controller = function() {
     // Topic record — topic_id from the URL is a sys_id on this table
     topic_table:          'topic',
     topic_name_field:     'name',
-    topic_template_field: 'template',   // reference to the sp_page that backs the topic
-
-    // Content record — sys_id from the detail URL points here
-    content_table:       'sn_cd_content',
-    content_title_field: 'title'
+    topic_template_field: 'template'    // reference to the sp_page that backs the topic
   };
 
   data.breadcrumbs = [];
@@ -138,9 +134,9 @@ api.controller = function() {
   }
 
   function getContentTitle(cId) {
-    var gr = new GlideRecord(CONFIG.content_table);
-    if (!gr.get(cId)) return null;
-    return gr.getValue(CONFIG.content_title_field);
+    // Same call the detail widget makes, so the title comes from one source.
+    var announcement = new sn_cd.cd_ContentDeliveryExtended().getPortalRichTextById(cId);
+    return announcement ? announcement.title : null;
   }
 
 })();
@@ -181,9 +177,9 @@ a {
   widget’s per-row links carrying `topic_id` (and ideally `origin_id`). With
   `topic_id` alone the back-to-list crumb still works; with `origin_id` it
   resolves exactly.
-- **Title resolution:** `getContentTitle` reads the content record directly. If
-  the detail widget already resolves the title through `cd_ContentDelivery`,
-  swap the GlideRecord for that method to keep a single source of truth.
+- **Title resolution:** `getContentTitle` uses
+  `sn_cd.cd_ContentDeliveryExtended().getPortalRichTextById(sys_id)` — the same
+  call the detail widget makes — and reads `.title` off the result.
 - **Topic URL:** assumes the topic’s landing page is the `sp_page` referenced by
   `topic.template`. Adjust `buildTopicUrl` if topics resolve their page a
   different way.
