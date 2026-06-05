@@ -21,7 +21,7 @@
     var DRY_RUN = true;  // <-- leave true until the logs look right, then set false
 
     // ---- Script-level properties (apply to the whole run) ----
-    var TEAM_NAME  = 'Family Services';   // leads the batch name
+    var TEAM_NAME  = 'TBD';   // leads the batch name
     var SCOPE_NAME = 'global';            // sys_scope name OR namespace (e.g. 'global', 'x_co_app').
                                           //   Resolved to a real scope and stamped on the batch.
                                           //   Leave '' to derive scope from the first matched set instead.
@@ -53,14 +53,19 @@
     // storyNumbers     : array of strings, each matched against existing US names
     var CHANGES = [
         {
-            changeNumber:     'CHG0030001',
-            releaseNumber:    '2026.1',
-            version:          '1.0',
-            shortDescription: 'Family Services - Staffing & MCM',
-            storyNumbers:     ['STRY0012345', 'STRY0012346', 'STRY0012347']
+            changeNumber:     '',
+            releaseNumber:    '1',
+            version:          '1',
+            shortDescription: '',
+            storyNumbers:     ['','']
+        }, 
+        {
+            changeNumber:     '',
+            releaseNumber:    '1',
+            version:          '1',
+            shortDescription: '',
+            storyNumbers:     ['','']
         }
-        // , { changeNumber: 'CHG0030002', releaseNumber: '2026.1', version: '1.0',
-        //     shortDescription: 'Commercial Sponsorship', storyNumbers: ['STRY0012400'] }
     ];
 
     // ============================ END CONFIG ============================
