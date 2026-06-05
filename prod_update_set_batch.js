@@ -69,9 +69,14 @@
     var LOG = 'PROD_BATCH';
     var summary = [];
 
-    // Use the scope value exactly as provided — no sys_scope lookup.
-    var SCOPE_LABEL      = SCOPE_NAME;   // used verbatim in the batch name
-    var CONFIGURED_SCOPE = SCOPE_NAME;   // stamped verbatim on the batch's application field
+    // Resolve the configured scope once, up front.
+    var scopeInfo        = resolveScope(SCOPE_NAME);
+    var CONFIGURED_SCOPE = scopeInfo.sysId;   // sys_id stamped on the batch's application field (null = derive from matches)
+    var SCOPE_LABEL      = scopeInfo.label;   // namespace string used in the batch name
+    if (SCOPE_NAME && !CONFIGURED_SCOPE) {
+        gs.warn('[' + LOG + '] SCOPE_NAME "' + SCOPE_NAME + '" did not resolve to a sys_scope — '
+            + 'falling back to deriving scope from the first matched update set.');
+    }
 
     for (var i = 0; i < CHANGES.length; i++) {
         processChange(CHANGES[i]);
@@ -132,14 +137,19 @@
                 gs.warn('[' + LOG + '] ' + change.changeNumber + ' — ' + storyResults[st] + ' update sets matched ' + st + ' (all will be attached)');
         }
 
-        // ---- target scope: exactly what was configured (verbatim) ----
+        // ---- determine target scope: configured wins, else derive from first attachable match ----
         var targetScope = CONFIGURED_SCOPE;
+        if (!targetScope) {
+            for (var m = 0; m < matches.length; m++) {
+                if (!matches[m].alreadyParented) { targetScope = matches[m].scope; break; }
+            }
+        }
 
         // ---- create the batch update set (the parent) ----
         var batchSysId = null;
         if (DRY_RUN) {
             gs.info('[' + LOG + '] [DRY RUN] WOULD create batch update set: "' + batchName + '"'
-                + (targetScope ? ' (scope ' + targetScope + ')' : ' (scope: current)'));
+                + (targetScope ? ' (scope sys_id ' + targetScope + ')' : ' (scope: current)'));
         } else {
             var batch = new GlideRecord('sys_update_set');
             batch.initialize();
@@ -161,6 +171,11 @@
                 skipped++;
                 continue;
             }
+            if (targetScope && match.scope !== targetScope) {
+                gs.warn('[' + LOG + '] SKIP "' + match.name + '" — scope mismatch (batch members must share the batch scope).');
+                skipped++;
+                continue;
+            }
 
             if (DRY_RUN) {
                 gs.info('[' + LOG + '] [DRY RUN] WOULD attach "' + match.name + '" (' + match.story + ') -> batch');
@@ -177,6 +192,27 @@
         }
 
         summary.push(change.changeNumber + ': batch "' + batchName + '" | attached ' + attached + ' | skipped ' + skipped);
+    }
+
+    /**
+     * Resolve a scope name/namespace to { sysId, label }.
+     * Matches either the namespace (`scope`, e.g. 'x_co_app' / 'global') or the
+     * display `name`. `sysId` is what gets stamped on the batch's application
+     * field; `label` is the real namespace used in the batch name. Falls back to
+     * the raw input (or 'global') for the label when nothing resolves.
+     */
+    function resolveScope(scopeName) {
+        var result = { sysId: null, label: scopeName || 'global' };
+        if (!scopeName) return result;
+        var sc = new GlideRecord('sys_scope');
+        var q = sc.addQuery('scope', scopeName);
+        q.addOrCondition('name', scopeName);
+        sc.query();
+        if (sc.next()) {
+            result.sysId = sc.getUniqueValue();
+            result.label = sc.getValue('scope') + '';   // namespace for the name
+        }
+        return result;
     }
 
     /**
