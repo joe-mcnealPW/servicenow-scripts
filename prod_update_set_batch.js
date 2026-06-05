@@ -172,9 +172,7 @@
                 continue;
             }
             if (targetScope && match.scope !== targetScope) {
-                gs.warn('[' + LOG + '] SKIP "' + match.name + '" — scope mismatch (batch members must share the batch scope).');
-                skipped++;
-                continue;
+                gs.info('[' + LOG + '] NOTE "' + match.name + '" is in a different scope than the batch — attaching anyway (mismatch allowed).');
             }
 
             if (DRY_RUN) {
