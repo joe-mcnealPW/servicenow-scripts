@@ -12,14 +12,14 @@
 
 **Cause:** the write used `gs.getUser().setPreference(...)`, which in a scoped app can throw "Illegal access to method setPreference in class com.glide.sys.User" — and the failure was invisible, because `recordClick` was called fire-and-forget with no response handling while the server swallowed the error into an unread `data.resp`. Any failure (the scoped-method error, a null `$sp.getPortalRecord()` on the round-trip, or a non-persisting `setPreference`) produced exactly the observed result: no preference, no error.
 
-**Fix:** reads and writes now go through direct `sys_user_preference` GlideRecord access (`readUserPref` / `writeUserPref`, keyed on `gs.getUserID()`), which persists regardless of scope; `getFrequentPrefName` is guarded; and failures are now logged server-side (`gs.error`/`gs.warn`) and surfaced client-side (`console.warn`) with a `saved` flag.
+**Fix:** reads go through a direct `sys_user_preference` GlideRecord query (`getPreference`, keyed on `gs.getUserID()`), which avoids the scoped illegal-access issue; writes use `gs.getUser().savePreference(...)` — the variant that actually persists, unlike `setPreference` — matching a read/write pattern already proven in this codebase. `getFrequentPrefName` is guarded, and failures are now logged server-side (`gs.error`/`gs.warn`) and surfaced client-side (`console.warn`).
 
 **Verify in ~30 seconds after re-importing:**
 1. Click a card, then check **System Logs → All**, filtered for `DLA frequent_apps` — any real error now shows here.
 2. Check **sys_user_preference** for a record named `<suffix>_frequent_apps` on your user.
-3. Open the browser console — a non-persisting write now logs `[DLA] recordClick did not persist`.
+3. Open the browser console — a failed call now logs `[DLA] recordClick did not succeed`.
 
-**If `saved` comes back false with no exception:** the write is being blocked, which points to the **widget's scope lacking create/update access to `sys_user_preference`** (a cross-scope table-access setting). Tell me the widget's application scope and I'll adjust the approach (e.g., move the write into a properly-scoped Script Include, or confirm the app's access to that table).
+**If the preference still doesn't appear** and System Logs show an error on `savePreference`, that would point to the widget's scope — and we'd move the write into a properly-scoped Script Include. Since this `getPreference`/`savePreference` pattern is already proven here, that's unlikely.
 
 ---
 
@@ -35,8 +35,8 @@
 - Stripped the half-wired icon/description data: the server no longer fetches `icon_url`/`description`, and the unused `.item-desc` CSS (base + hover) is removed. **Judgment call** — see note below.
 
 **Robustness / performance**
-- **Preferences are now read/written via direct `sys_user_preference` GlideRecord access, not `gs.getUser().get/setPreference`.** The latter can throw "Illegal access" in a scoped app and has documented persistence quirks — the likely reason clicks never created a preference in earlier versions. (See §0.)
-- **Click-tracking failures are no longer silent.** The server logs to `gs.error`/`gs.warn`, returns a `saved` flag, and the client inspects the response and `console.warn`s if the write didn't persist.
+- **Preferences now use a proven read/write pattern:** read via a `sys_user_preference` GlideRecord query, write via `gs.getUser().savePreference()`. The earlier code used `setPreference`, which does not reliably persist (and can throw "Illegal access" in a scoped app) — the reason clicks never created a preference. (See §0.)
+- **Click-tracking failures are no longer silent.** The server logs to `gs.error`/`gs.warn`, and the client inspects the response and `console.warn`s if the call didn't succeed.
 - `getFrequentPrefName` is guarded so a null portal record on a round-trip can't throw.
 - `$sp.getWidget("dlac_favorite", …)` is now built only for the first `FAV_WIDGET_CAP` cards (after ordering), instead of every app — capping expensive server-side widget renders.
 - `JSON.parse` on the preference is wrapped in a `safeParseArray` helper that returns `[]` on malformed data, so a bad preference can't crash the load path.
@@ -245,8 +245,8 @@ api.controller = function($scope, $window, $location, $timeout) {
       name: item.name
     }).then(function(response) {
       var resp = (response && response.data) ? response.data.resp : null;
-      if (!resp || resp.status !== "success" || resp.saved === false) {
-        console.warn("[DLA] recordClick did not persist:", resp);
+      if (!resp || resp.status !== "success") {
+        console.warn("[DLA] recordClick did not succeed:", resp);
       }
     }, function(err) {
       console.warn("[DLA] recordClick request failed:", err);
@@ -337,8 +337,8 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
   /* Click-tracking dispatch — handled before the async guard. */
   if (input && input.action === "recordClick") {
     try {
-      var saved = recordClick(input);
-      data.resp = { "status": "success", "saved": !!saved };
+      recordClick(input);
+      data.resp = { "status": "success" };
     } catch (e) {
       gs.error("[DLA frequent_apps] recordClick failed: " + e);
       data.resp = { "status": "failed", "msg": e.message };
@@ -365,35 +365,23 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
     }
   }
 
-  /* ===== user-preference read/write — direct sys_user_preference access =====
-     Uses GlideRecord rather than gs.getUser().get/setPreference, which can
-     throw "Illegal access" in a scoped app and has documented persistence
-     quirks. This persists reliably regardless of widget scope. */
-  function readUserPref(name) {
-    var gr = new GlideRecord('sys_user_preference');
-    gr.addQuery('user', gs.getUserID());
-    gr.addQuery('name', name);
-    gr.setLimit(1);
-    gr.query();
-    return gr.next() ? gr.getValue('value') : null;
+  /* ===== user-preference read/write (proven pattern) =====
+     Read via GlideRecord (avoids the scoped gs.getUser().getPreference()
+     "illegal access" issue); write via gs.getUser().savePreference(), which
+     persists to sys_user_preference (unlike setPreference, which does not). */
+  function getPreference(name) {
+    var preference = new GlideRecord("sys_user_preference");
+    preference.addQuery('name', name);
+    preference.addQuery('user', gs.getUserID());
+    preference.query();
+    if (preference.next()) {
+      return preference.getValue("value");
+    }
+    return null;
   }
 
-  function writeUserPref(name, value) {
-    var gr = new GlideRecord('sys_user_preference');
-    gr.addQuery('user', gs.getUserID());
-    gr.addQuery('name', name);
-    gr.setLimit(1);
-    gr.query();
-    if (gr.next()) {
-      gr.setValue('value', value);
-      return gr.update();      // returns the record sys_id, or '' on failure
-    }
-    gr.initialize();
-    gr.setValue('user', gs.getUserID());
-    gr.setValue('name', name);
-    gr.setValue('value', value);
-    gr.setValue('type', 'string');
-    return gr.insert();        // returns the new sys_id, or '' on failure
+  function savePreference(key, value) {
+    return gs.getUser().savePreference(key, JSON.stringify(value)); // stringifies internally
   }
 
   /* ===== app query: all available apps, by name ===== */
@@ -455,7 +443,7 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
 
   // Returns { <sys_id>: { id, name, count, last_clicked } } for the current user.
   function getFrequentMap() {
-    var list = safeParseArray(readUserPref(getFrequentPrefName()));
+    var list = safeParseArray(getPreference(getFrequentPrefName()));
     var map = {};
     for (var i = 0; i < list.length; i++) {
       if (list[i] && list[i].id) map[list[i].id] = list[i];
@@ -463,12 +451,11 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
     return map;
   }
 
-  // Increment (or create) the click count for one app. Returns the saved
-  // record sys_id (truthy) or '' if the write did not persist.
+  // Increment (or create) the click count for one app.
   function recordClick(payload) {
-    if (!payload || !payload.sys_id) return false;
+    if (!payload || !payload.sys_id) return;
     var prefName = getFrequentPrefName();
-    var list = safeParseArray(readUserPref(prefName));
+    var list = safeParseArray(getPreference(prefName));
     var now = new GlideDateTime().getNumericValue(); // epoch ms, for recency tie-break
 
     var found = false;
@@ -484,7 +471,7 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
     if (!found) {
       list.push({ id: payload.sys_id, name: payload.name || "", count: 1, last_clicked: now });
     }
-    return writeUserPref(prefName, JSON.stringify(list));
+    savePreference(prefName, list); // savePreference stringifies the array internally
   }
 
   // Re-order data.list_items so frequents come first; tag each item.
@@ -547,7 +534,7 @@ Changes: added the `recordClick` action branch; added `safeParseArray`, `buildFa
 
 ## 7. Verify before go-live
 
-- Preference persistence: after a click, confirm a `<suffix>_frequent_apps` row appears in `sys_user_preference`. If not, check System Logs for `DLA frequent_apps` and confirm the widget's scope can write that table (see §0).
+- Preference persistence: after a click, confirm a `<suffix>_frequent_apps` row appears in `sys_user_preference`. If not, check System Logs for `DLA frequent_apps` (see §0).
 - The favorite star still toggles after adding `$event.stopPropagation()` on `.fav-icon` (expected — it only blocks bubbling to the card).
 - Nothing outside this widget depended on the removed `recent` / `popular` / `favorites` branches, `getFavorites()`, or the `icon_url` / `description` fields.
 - `FAV_WIDGET_CAP` (default 12) exceeds the most cards your widest layout displays.
