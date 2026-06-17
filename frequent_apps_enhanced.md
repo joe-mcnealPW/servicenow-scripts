@@ -1,53 +1,51 @@
 # Enhanced Solution — Frequent-Apps Tracking + Code Cleanup (Complete Widget)
 
 > **Relationship to `solution.md`:** This is the same frequent-apps feature, plus every improvement from the review. `solution.md` keeps the original code untouched except for the feature; **this file applies the fixes too.** Each section below is the whole, drop-in file.
-> 
-> **Widget:** DLA Connect — Applications · **Instance ID:** `083dbc0647a97610e4c3c1aa436d435f` · **Scope:** `x_g_dla_dla_connec`
+>
+> **Widget:** gens Connect — Applications · **Instance ID:** `083dbc0647a97610e4c3c1aa436d435f` · **Scope:** `x_g_gens_gens_connec`
 
------
+---
 
-## 0. Bug fix — clicks weren’t creating a preference
+## 0. Bug fix — clicks weren't creating a preference
 
 **Symptom:** clicking a card never created the `_frequent_apps` preference (in this and the prior version).
 
-**Cause:** the write used `gs.getUser().setPreference(...)`, which in a scoped app can throw “Illegal access to method setPreference in class com.glide.sys.User” — and the failure was invisible, because `recordClick` was called fire-and-forget with no response handling while the server swallowed the error into an unread `data.resp`. Any failure (the scoped-method error, a null `$sp.getPortalRecord()` on the round-trip, or a non-persisting `setPreference`) produced exactly the observed result: no preference, no error.
+**Cause:** the write used `gs.getUser().setPreference(...)`, which in a scoped app can throw "Illegal access to method setPreference in class com.glide.sys.User" — and the failure was invisible, because `recordClick` was called fire-and-forget with no response handling while the server swallowed the error into an unread `data.resp`. Any failure (the scoped-method error, a null `$sp.getPortalRecord()` on the round-trip, or a non-persisting `setPreference`) produced exactly the observed result: no preference, no error.
 
 **Fix:** reads go through a direct `sys_user_preference` GlideRecord query (`getPreference`, keyed on `gs.getUserID()`), which avoids the scoped illegal-access issue; writes use `gs.getUser().savePreference(...)` — the variant that actually persists, unlike `setPreference` — matching a read/write pattern already proven in this codebase. `getFrequentPrefName` is guarded, and failures are now logged server-side (`gs.error`/`gs.warn`) and surfaced client-side (`console.warn`).
 
 **Verify in ~30 seconds after re-importing:**
+1. Click a card, then check **System Logs → All**, filtered for `gens frequent_apps` — any real error now shows here.
+2. Check **sys_user_preference** for a record named `<suffix>_frequent_apps` on your user.
+3. Open the browser console — a failed call now logs `[gens] recordClick did not succeed`.
 
-1. Click a card, then check **System Logs → All**, filtered for `DLA frequent_apps` — any real error now shows here.
-1. Check **sys_user_preference** for a record named `<suffix>_frequent_apps` on your user.
-1. Open the browser console — a failed call now logs `[DLA] recordClick did not succeed`.
+**If the preference still doesn't appear** and System Logs show an error on `savePreference`, that would point to the widget's scope — and we'd move the write into a properly-scoped Script Include. Since this `getPreference`/`savePreference` pattern is already proven here, that's unlikely.
 
-**If the preference still doesn’t appear** and System Logs show an error on `savePreference`, that would point to the widget’s scope — and we’d move the write into a properly-scoped Script Include. Since this `getPreference`/`savePreference` pattern is already proven here, that’s unlikely.
+---
 
------
+
 
 **Bug fixes**
-
-- **Frequency now influences which apps are fetched, not just their order.** Previously the query fetched only the first `max_items` apps alphabetically (`setLimit` + `orderBy("name")`), then reordered *those*. A frequently-clicked app that sorted past the cap (e.g. a “C”/“D” app beyond #12) was never pulled in, so it could never surface no matter how often it was clicked. The query now fetches all available apps and the `max_items` cap is applied *after* frequency ordering.
+- **Frequency now influences which apps are fetched, not just their order.** Previously the query fetched only the first `max_items` apps alphabetically (`setLimit` + `orderBy("name")`), then reordered *those*. A frequently-clicked app that sorted past the cap (e.g. a "C"/"D" app beyond #12) was never pulled in, so it could never surface no matter how often it was clicked. The query now fetches all available apps and the `max_items` cap is applied *after* frequency ordering.
 - `getFavoriteWidget` now passes `url: item.url` (was `item.app_url`, which was always undefined).
 - Favorite-star clicks no longer leak into the card. The `.fav-icon` wrapper now calls `$event.stopPropagation()`, so the 5-second `fav_change` window — which could swallow an unrelated card click — is **removed entirely** (along with `favRevert` and the two `$rootScope` favorite listeners).
 
 **Dead-code removal**
-
 - Removed the unreachable `CALLABLE_FUNCTIONS` / `input.func` block (server) and the `ajax()`-based `c.tag` / `c.tag_selected` (client).
-- With the `ajax` path gone, `getMyApplications` only ever ran with `"all"`, so the `favorites` / `recent` / `popular` switch branches and `getFavorites()` are removed. `getMyApplications` is now a plain “all available apps, by name” query.
+- With the `ajax` path gone, `getMyApplications` only ever ran with `"all"`, so the `favorites` / `recent` / `popular` switch branches and `getFavorites()` are removed. `getMyApplications` is now a plain "all available apps, by name" query.
 - Stripped the half-wired icon/description data: the server no longer fetches `icon_url`/`description`, and the unused `.item-desc` CSS (base + hover) is removed. **Judgment call** — see note below.
 
 **Robustness / performance**
-
-- **Preferences now use a proven read/write pattern:** read via a `sys_user_preference` GlideRecord query, write via `gs.getUser().savePreference()`. The earlier code used `setPreference`, which does not reliably persist (and can throw “Illegal access” in a scoped app) — the reason clicks never created a preference. (See §0.)
-- **Click-tracking failures are no longer silent.** The server logs to `gs.error`/`gs.warn`, and the client inspects the response and `console.warn`s if the call didn’t succeed.
-- `getFrequentPrefName` is guarded so a null portal record on a round-trip can’t throw.
-- `$sp.getWidget("dlac_favorite", …)` is now built only for the first `FAV_WIDGET_CAP` cards (after ordering), instead of every app — capping expensive server-side widget renders.
-- `JSON.parse` on the preference is wrapped in a `safeParseArray` helper that returns `[]` on malformed data, so a bad preference can’t crash the load path.
+- **Preferences now use a proven read/write pattern:** read via a `sys_user_preference` GlideRecord query, write via `gs.getUser().savePreference()`. The earlier code used `setPreference`, which does not reliably persist (and can throw "Illegal access" in a scoped app) — the reason clicks never created a preference. (See §0.)
+- **Click-tracking failures are no longer silent.** The server logs to `gs.error`/`gs.warn`, and the client inspects the response and `console.warn`s if the call didn't succeed.
+- `getFrequentPrefName` is guarded so a null portal record on a round-trip can't throw.
+- `$sp.getWidget("gensc_favorite", …)` is now built only for the first `FAV_WIDGET_CAP` cards (after ordering), instead of every app — capping expensive server-side widget renders.
+- `JSON.parse` on the preference is wrapped in a `safeParseArray` helper that returns `[]` on malformed data, so a bad preference can't crash the load path.
 - Resize handling is **debounced** (a burst of `ResizeObserver` events collapses into one recalculation) and the observer + pending timer are **disconnected on `$scope.$destroy`** (no leak).
 - `calculateVisibleCards` now guards against `c.data` not being loaded yet.
 
 **Cosmetic**
-
+- **Two-block layout:** frequent and alphabetical apps render as two separate `.card-group` flex containers with a centered `.card-separator` between them (Flexbox `gap`, no absolute positioning), replacing the earlier single ordered run with an inline pseudo-element divider. Each block's `flex-grow` is proportional to its card count so cards stay uniform width across the gap.
 - `window.open` → `$window.open`.
 - Instance sys_id is referenced via a single `WIDGET_ID` constant instead of being hardcoded in multiple `getElementById` calls.
 - Card-count math fixed: gaps between N cards are `(N-1)`, and the formula no longer depends on the stale `visible_cards.length`.
@@ -55,13 +53,12 @@
 - Fixed the `-webkit-box-orietn` → `-webkit-box-orient` typo.
 
 **Two judgment calls (reversible)**
+1. **Icon/description: stripped, not rendered.** `.item-desc` was styled as a 2-column grid (copied from `.item-icon`) — wrong for text — and rendering descriptions changes the card layout. That's design work, not cleanup, so the unused data/CSS was removed and the widget stays visually identical. If you want real per-app icons later, `application_icon` is still available on the table.
+2. **Favorite fix via `stopPropagation` in this widget**, rather than editing the `gensc_favorite` child widget. Self-contained and lower-touch. Verify the star still toggles (it will — propagation stopping doesn't block the child's own handler).
 
-1. **Icon/description: stripped, not rendered.** `.item-desc` was styled as a 2-column grid (copied from `.item-icon`) — wrong for text — and rendering descriptions changes the card layout. That’s design work, not cleanup, so the unused data/CSS was removed and the widget stays visually identical. If you want real per-app icons later, `application_icon` is still available on the table.
-1. **Favorite fix via `stopPropagation` in this widget**, rather than editing the `dlac_favorite` child widget. Self-contained and lower-touch. Verify the star still toggles (it will — propagation stopping doesn’t block the child’s own handler).
+**Confirmed feature decisions** (carried from `solution.md`): portal-scoped `<url_suffix>_frequent_apps`; reorder on next load, not live; 2px translucent-white separator between the two blocks.
 
-**Confirmed feature decisions** (unchanged from `solution.md`): portal-scoped `<url_suffix>_frequent_apps`; reorder on next load, not live; 2px translucent-white divider.
-
------
+---
 
 ## 2. HTML Template
 
@@ -71,7 +68,7 @@
     <h3 class="section-title headline-medium">
       {{options.title}}
     </h3>
-    <a href="?id=dla_connect_applications" class="view-all"><span class='title-small'>View All</span><i class="title-small fa fa-arrow-right"></i></a>
+    <a href="?id=gens_connect_applications" class="view-all"><span class='title-small'>View All</span><i class="title-small fa fa-arrow-right"></i></a>
   </div>
   <div class="card-section card-section-bg" ng-show="c.show_content">
     <div class="card-view" ng-show="c.view_type == 'card'">
@@ -89,35 +86,67 @@
         <div class="fav-icon" >
         </div>
       </div>
-      <div class="item-card"
-           ng-repeat="item in data.visible_cards"
-           ng-if='c.show_cards && !data.isLoading'
-           ng-class="{'divider-start': $index === c.divider_index}"
-           ng-click="c.item_selected(item)"
-           id="card-{{item.sys_id}}">
-        <div class='item-content'>
-          <div class="item-icon">
-            <i class="fa-regular fa-square" aria-hidden="true"></i>
-            <i class="fa-regular fa-square" aria-hidden="true"></i>
-            <i class="fa-regular fa-square" aria-hidden="true"></i>
-            <i class="fa-regular fa-square" aria-hidden="true"></i>
-          </div>
-          <div class="item-name">
-            {{item.name}}
+      <!-- Loaded: two groups (frequent | alphabetical) as flex children with a separator between -->
+      <div class="card-groups" ng-if='c.show_cards && !data.isLoading'>
+
+        <!-- Block 1: preserved-frequency apps -->
+        <div class="card-group" ng-if="c.frequent_cards.length" ng-style="{'flex-grow': c.frequent_cards.length}">
+          <div class="item-card"
+               ng-repeat="item in c.frequent_cards"
+               ng-click="c.item_selected(item)"
+               id="card-{{item.sys_id}}">
+            <div class='item-content'>
+              <div class="item-icon">
+                <i class="fa-regular fa-square" aria-hidden="true"></i>
+                <i class="fa-regular fa-square" aria-hidden="true"></i>
+                <i class="fa-regular fa-square" aria-hidden="true"></i>
+                <i class="fa-regular fa-square" aria-hidden="true"></i>
+              </div>
+              <div class="item-name">
+                {{item.name}}
+              </div>
+            </div>
+            <div class="fav-icon" ng-click="$event.stopPropagation()">
+              <sp-widget widget="item.fav_widget"></sp-widget>
+            </div>
           </div>
         </div>
-        <div class="fav-icon" ng-click="$event.stopPropagation()">
-          <sp-widget widget="item.fav_widget"></sp-widget>
+
+        <!-- Separator: only rendered when BOTH groups have cards -->
+        <div class="card-separator" ng-if="c.frequent_cards.length && c.alpha_cards.length"></div>
+
+        <!-- Block 2: alphabetical apps -->
+        <div class="card-group" ng-if="c.alpha_cards.length" ng-style="{'flex-grow': c.alpha_cards.length}">
+          <div class="item-card"
+               ng-repeat="item in c.alpha_cards"
+               ng-click="c.item_selected(item)"
+               id="card-{{item.sys_id}}">
+            <div class='item-content'>
+              <div class="item-icon">
+                <i class="fa-regular fa-square" aria-hidden="true"></i>
+                <i class="fa-regular fa-square" aria-hidden="true"></i>
+                <i class="fa-regular fa-square" aria-hidden="true"></i>
+                <i class="fa-regular fa-square" aria-hidden="true"></i>
+              </div>
+              <div class="item-name">
+                {{item.name}}
+              </div>
+            </div>
+            <div class="fav-icon" ng-click="$event.stopPropagation()">
+              <sp-widget widget="item.fav_widget"></sp-widget>
+            </div>
+          </div>
         </div>
+
       </div>
     </div>
   </div>
 </div>
 ```
 
-Changes: removed `| limitTo: 5` from the skeleton repeat; real card row gets the divider `ng-class`, `c.item_selected(item)`, and the `.fav-icon` now stops click propagation. The four-square icon glyph is unchanged.
+Changes: removed `| limitTo: 5` from the skeleton repeat; the loaded state is now two `.card-group` flex blocks (`c.frequent_cards`, `c.alpha_cards`) with a `.card-separator` element between them rendered only when both blocks are non-empty; each block's `flex-grow` is set proportional to its card count so cards stay uniform width. The `.fav-icon` stops click propagation; the four-square icon glyph is unchanged.
 
------
+---
 
 ## 3. CSS / SCSS
 
@@ -180,26 +209,37 @@ Changes: removed `| limitTo: 5` from the skeleton repeat; real card row gets the
     cursor: pointer;
     background-color: $Sky-600;
   }
+}
 
-  /* Vertical divider before the first non-frequent card */
-  &.divider-start {
-    position: relative;
-  }
-  &.divider-start::before {
-    content: "";
-    position: absolute;
-    left: -5px;   /* sits in the ~8px inter-card gap — tune to the live container */
-    top: 10%;
-    bottom: 10%;
-    width: 2px;
-    background-color: rgba(255, 255, 255, 0.65);
-  }
+/* Two-group layout: [frequent] | [alphabetical] as a flex row */
+.card-groups {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: stretch;   /* lets the separator stretch to card height */
+  gap: 12px;              /* breathing room on BOTH sides of the separator */
+  width: 100%;
+}
+
+.card-group {
+  display: flex;
+  gap: 8px;               /* inter-card gap within a group (matches original) */
+  flex-basis: 0;
+  min-width: 0;
+  /* flex-grow is set inline via ng-style, proportional to the group's card
+     count, so cards stay uniform width across both groups */
+}
+
+.card-separator {
+  flex: 0 0 2px;          /* fixed 2px bar, no grow/shrink */
+  align-self: stretch;    /* full card height */
+  background-color: rgba(255, 255, 255, 0.65);
+  border-radius: 1px;
 }
 ```
 
-Changes: removed `.content-toggle`, `.item-desc` (base + hover), and the redundant `.item-name` hover rule; fixed the `-webkit-box-orient` typo; added the divider rule.
+Changes: removed `.content-toggle`, `.item-desc` (base + hover), and the redundant `.item-name` hover rule; fixed the `-webkit-box-orient` typo; replaced the inline absolute-positioned divider with the two-block flex layout (`.card-groups`, `.card-group`, `.card-separator`).
 
------
+---
 
 ## 4. Client Script
 
@@ -212,6 +252,8 @@ api.controller = function($scope, $window, $location, $timeout) {
 
   c.show_content = true;
   c.show_cards = false;
+  c.frequent_cards = [];
+  c.alpha_cards = [];
   c.toggle_content = function() { c.show_content = !c.show_content; };
 
   /*
@@ -251,26 +293,25 @@ api.controller = function($scope, $window, $location, $timeout) {
     }).then(function(response) {
       var resp = (response && response.data) ? response.data.resp : null;
       if (!resp || resp.status !== "success") {
-        console.warn("[DLA] recordClick did not succeed:", resp);
+        console.warn("[gens] recordClick did not succeed:", resp);
       }
     }, function(err) {
-      console.warn("[DLA] recordClick request failed:", err);
+      console.warn("[gens] recordClick request failed:", err);
     });
   };
 
-  // Index (within visible_cards) of the first non-frequent card that follows a
-  // frequent one. -1 means: no frequents, all-frequent, or no boundary visible.
-  c.computeDividerIndex = function() {
-    c.divider_index = -1;
+  // Partition the visible cards into the two render blocks. Because list_items
+  // is ordered frequents-first, filtering preserves order cleanly.
+  c.computeCardGroups = function() {
+    c.frequent_cards = [];
+    c.alpha_cards = [];
     if (!c.data || !c.data.visible_cards) return;
     var cards = c.data.visible_cards;
-    var sawFrequent = false;
     for (var i = 0; i < cards.length; i++) {
       if (cards[i].is_frequent) {
-        sawFrequent = true;
-      } else if (sawFrequent) {
-        c.divider_index = i;
-        return;
+        c.frequent_cards.push(cards[i]);
+      } else {
+        c.alpha_cards.push(cards[i]);
       }
     }
   };
@@ -291,7 +332,7 @@ api.controller = function($scope, $window, $location, $timeout) {
     }
 
     c.data.visible_cards = c.data.list_items.slice(0, count);
-    c.computeDividerIndex();
+    c.computeCardGroups();
 
     if (!c.show_cards) {
       c.show_cards = true;
@@ -328,9 +369,9 @@ api.controller = function($scope, $window, $location, $timeout) {
 };
 ```
 
-Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery, both favorite `$rootScope` listeners, the dead `c.tag`/`c.tag_selected`, and the separate `handleResize`. `item_selected` is now immediate (no 200ms timer) and uses `$window.open`. Added `WIDGET_ID`, debounced `updateVisibleCards`, fixed card-count math, null guard, `$destroy` cleanup, plus the frequent-apps additions (`recordClick`, `computeDividerIndex`, divider in `calculateVisibleCards`, recompute in the `loadData` callback). `toggle_view`, `toggle_content`, and `item_selected_no_tab` remain (unwired, but not part of the removals).
+Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery, both favorite `$rootScope` listeners, the dead `c.tag`/`c.tag_selected`, and the separate `handleResize`. `item_selected` is now immediate (no 200ms timer) and uses `$window.open`. Added `WIDGET_ID`, debounced `updateVisibleCards`, fixed card-count math, null guard, `$destroy` cleanup, plus the frequent-apps additions (`recordClick`, `computeCardGroups` partitioning visible cards into `frequent_cards`/`alpha_cards`, recompute in the `loadData` callback). `toggle_view`, `toggle_content`, and `item_selected_no_tab` remain (unwired, but not part of the removals).
 
------
+---
 
 ## 5. Server Script
 
@@ -345,7 +386,7 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
       recordClick(input);
       data.resp = { "status": "success" };
     } catch (e) {
-      gs.error("[DLA frequent_apps] recordClick failed: " + e);
+      gs.error("[gens frequent_apps] recordClick failed: " + e);
       data.resp = { "status": "failed", "msg": e.message };
     }
     return; // do NOT re-query or re-order on a click
@@ -356,7 +397,7 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
     return;
   }
 
-  const common = new x_g_dla_dla_connec.DLACommon();
+  const common = new x_g_gens_gens_connec.gensCommon();
   const FAV_WIDGET_CAP = options.max_items || 12; // cap $sp.getWidget() calls; must exceed the most cards ever shown
 
   /* ===== safe JSON parse ===== */
@@ -413,7 +454,7 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
 
   /* ===== favorite child widgets — built only for the cards likely to render ===== */
   function getFavoriteWidget(item, type) {
-    return $sp.getWidget("dlac_favorite", {
+    return $sp.getWidget("gensc_favorite", {
       sys_id: item.sys_id,
       title: item.name,
       description: null,
@@ -441,7 +482,7 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
     var rec = $sp.getPortalRecord();
     var suffix = rec ? rec.getDisplayValue('url_suffix') : '';
     if (!suffix) {
-      gs.warn("[DLA frequent_apps] portal url_suffix unavailable; using unscoped preference name");
+      gs.warn("[gens frequent_apps] portal url_suffix unavailable; using unscoped preference name");
     }
     return suffix + '_frequent_apps';
   }
@@ -526,31 +567,31 @@ Changes: dropped `$rootScope` injection, the `fav_change`/`favRevert` machinery,
 
 Changes: added the `recordClick` action branch; added `safeParseArray`, `buildFavoriteWidgets` + `FAV_WIDGET_CAP`, and the frequency helpers; simplified `getMyApplications` (no filter/switch, no `icon_url`/`description`); fixed `getFavoriteWidget` to use `item.url`; removed `getFavorites` and the `CALLABLE_FUNCTIONS`/`input.func` block. Favorite widgets are now built after ordering and capped.
 
------
+---
 
 ## 6. Behavior & edge cases
 
-- **App clicked elsewhere (e.g. the full “all applications” page), alphabetically beyond the cap:** now surfaces. The full available set is fetched and ordered by frequency before the cap is applied, so a heavily-clicked “C”/“D” app is pulled to the front and displayed.
-- **New user:** name order, no frequents, no divider — same as today.
-- **More frequents than fit:** all visible cards frequent → no divider → top frequents shown, rest cut off.
-- **Mixed visible:** divider before the first non-frequent card.
+- **App clicked elsewhere (e.g. the full "all applications" page), alphabetically beyond the cap:** now surfaces. The full available set is fetched and ordered by frequency before the cap is applied, so a heavily-clicked "C"/"D" app is pulled to the front and displayed.
+- **New user:** name order, no frequents, no separator — same as today.
+- **More frequents than fit:** all visible cards frequent → no separator → top frequents shown, rest cut off.
+- **Mixed visible:** the separator sits between the frequent block and the alphabetical block.
 - **Lost-access app:** excluded from display automatically.
 - **Favorite-star tap:** stops propagation — toggles the favorite, never opens the app, never counts a click.
 - **Mobile (≤480px):** 2 cards; `show_cards` is set so cards render.
 - **Very wide screen beyond the cap:** if more than `FAV_WIDGET_CAP` cards are ever shown at once, the overflow cards render without a favorite star (no error). Raise the cap if your widest layout exceeds ~12 cards.
 
------
+---
 
 ## 7. Verify before go-live
 
-- Preference persistence: after a click, confirm a `<suffix>_frequent_apps` row appears in `sys_user_preference`. If not, check System Logs for `DLA frequent_apps` (see §0).
+- Preference persistence: after a click, confirm a `<suffix>_frequent_apps` row appears in `sys_user_preference`. If not, check System Logs for `gens frequent_apps` (see §0).
 - The favorite star still toggles after adding `$event.stopPropagation()` on `.fav-icon` (expected — it only blocks bubbling to the card).
 - Nothing outside this widget depended on the removed `recent` / `popular` / `favorites` branches, `getFavorites()`, or the `icon_url` / `description` fields.
 - `FAV_WIDGET_CAP` (default 12) exceeds the most cards your widest layout displays.
-- `.card-view` container CSS (gap/flex) — not in the screenshots — for tuning the divider’s `left` offset and confirming the corrected card-count math renders as expected.
+- `.card-view` container CSS (gap/flex) — not in the screenshots — to confirm the two-block flex layout and the `.card-groups` gap render as expected, and that the corrected card-count math fits.
 - `$sp.getPortalRecord().getDisplayValue('url_suffix')` resolves on the page this widget lives on (already used by the existing favorites code).
 
------
+---
 
 ## 8. Still open for later (not bugs, just roadmap)
 
