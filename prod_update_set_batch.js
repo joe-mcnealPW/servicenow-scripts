@@ -21,7 +21,7 @@
     var DRY_RUN = true;  // <-- leave true until the logs look right, then set false
 
     // ---- Script-level properties (apply to the whole run) ----
-    var TEAM_NAME  = 'TBD';   // leads the batch name
+    var TEAM_NAME  = 'TBD';               // leads the batch name
     var SCOPE_NAME = 'global';            // sys_scope name OR namespace (e.g. 'global', 'x_co_app').
                                           //   Resolved to a real scope and stamped on the batch.
                                           //   Leave '' to derive scope from the first matched set instead.
@@ -57,15 +57,10 @@
             releaseNumber:    '1',
             version:          '1',
             shortDescription: '',
-            storyNumbers:     ['','']
-        }, 
-        {
-            changeNumber:     '',
-            releaseNumber:    '1',
-            version:          '1',
-            shortDescription: '',
-            storyNumbers:     ['','']
+            storyNumbers:     []
         }
+        // , { changeNumber: '', releaseNumber: '1', version: '1',
+        //     shortDescription: '', storyNumbers: [] }
     ];
 
     // ============================ END CONFIG ============================
@@ -163,6 +158,7 @@
 
         // ---- attach each match as a batch member ----
         var attached = 0, skipped = 0;
+        var attachedChildren = [];   // sysIds of direct children — roots for the PSR tree walk
         for (var a = 0; a < matches.length; a++) {
             var match = matches[a];
 
@@ -175,6 +171,7 @@
             if (DRY_RUN) {
                 gs.info('[' + LOG + '] [DRY RUN] WOULD attach "' + match.name + '" (' + match.story + ') -> batch');
                 attached++;
+                attachedChildren.push(match.sysId);
             } else {
                 var child = new GlideRecord('sys_update_set');
                 if (child.get(match.sysId)) {
@@ -182,7 +179,33 @@
                     child.update();
                     gs.info('[' + LOG + '] Attached "' + match.name + '" (' + match.story + ') -> batch');
                     attached++;
+                    attachedChildren.push(match.sysId);
                 }
+            }
+        }
+
+        // ---- build the PSR roll-up from the FULL subtree under the batch ----
+        // Walks each direct child and recurses into its own children (any depth), so a
+        // child that is itself a batch parent contributes its line plus all its members'.
+        var psrLines = [];
+        var seen = {};
+        for (var pc = 0; pc < attachedChildren.length; pc++) {
+            collectPsrLines(attachedChildren[pc], psrLines, seen);
+        }
+        var batchDescription = 'Production Batch for ' + change.shortDescription;
+        if (psrLines.length) batchDescription += '\n\n' + psrLines.join('\n');
+
+        // ---- finalize: write description + mark complete (one update) ----
+        if (DRY_RUN) {
+            gs.info('[' + LOG + '] [DRY RUN] WOULD set batch "' + batchName + '" description to:\n' + batchDescription);
+            gs.info('[' + LOG + '] [DRY RUN] WOULD set batch "' + batchName + '" state -> complete');
+        } else if (batchSysId) {
+            var done = new GlideRecord('sys_update_set');
+            if (done.get(batchSysId)) {
+                done.setValue('description', batchDescription);
+                done.setValue('state', 'complete');
+                done.update();
+                gs.info('[' + LOG + '] Batch "' + batchName + '" finalized (PSR roll-up written, marked complete).');
             }
         }
 
@@ -208,6 +231,50 @@
             result.label = sc.getValue('scope') + '';   // namespace for the name
         }
         return result;
+    }
+
+    /**
+     * Recursively walk an update set and ALL of its descendants (children, their
+     * children, etc.), appending one PSR line per set to `lines`. `seen` guards
+     * against double-listing and cycles. Children are collected before recursing
+     * so the GlideRecord cursor isn't disturbed mid-walk.
+     *
+     *   "PSR12345 - <name>"            (one PSR)
+     *   "PSR12345,PSR67890 - <name>"   (multiple PSRs)
+     *   "[No PSR number found] - <name>"
+     */
+    function collectPsrLines(sysId, lines, seen) {
+        if (!sysId || seen[sysId]) return;
+        seen[sysId] = true;
+
+        var gr = new GlideRecord('sys_update_set');
+        if (!gr.get(sysId)) return;
+
+        var name = gr.getValue('name') + '';
+        var psrs = extractPSRs(gr.getValue('description') + '');
+        lines.push((psrs.length ? psrs.join(',') : '[No PSR number found]') + ' - ' + name);
+
+        // collect child sysIds first, then recurse
+        var childIds = [];
+        var kids = new GlideRecord('sys_update_set');
+        kids.addQuery('parent', sysId);
+        kids.query();
+        while (kids.next()) childIds.push(kids.getUniqueValue() + '');
+        for (var i = 0; i < childIds.length; i++) collectPsrLines(childIds[i], lines, seen);
+    }
+
+    /**
+     * Pull every PSR token (form: PSR followed by digits, e.g. PSR12345) out of a
+     * description, de-duplicated, preserving first-seen order.
+     */
+    function extractPSRs(text) {
+        var out = [], seenPsr = {};
+        if (!text) return out;
+        var re = /PSR\d+/g, m;
+        while ((m = re.exec(text)) !== null) {
+            if (!seenPsr[m[0]]) { seenPsr[m[0]] = true; out.push(m[0]); }
+        }
+        return out;
     }
 
     /**
