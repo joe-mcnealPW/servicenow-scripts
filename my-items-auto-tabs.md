@@ -2117,5 +2117,185 @@ setCurrentTabById() ---------------------------------> rebuildTabSplit() only (n
 
 **Robustness**
 - [ ] No boundary jitter when parked at a width right at the fit threshold.
+
+
+# WaaG Widget — Tab Overflow Not Reducing (Bugfix + Logging)
+
+## Symptom
+
+Shrinking the container does not reduce the number of visible tabs. The count rule works (6 tabs render as 4 + a "more (2)"), but as the container narrows the tabs **overrun the container** instead of collapsing to 3+more, 2+more, etc. Stage 1 (count rule) runs; Stage 2 (the width reducer) never fires.
+
+## Root cause
+
+`isBarOverflowing()` detects overflow with `scrollWidth > clientWidth`, but `.tab-wrapper` right-aligns its tabs (`justify-content: end`). When the tabs don't fit, they overflow off the **left / start** edge — and `scrollWidth` does **not** count content that overflows to the left; it only measures content extending past the **right** edge.
+
+So with right-aligned tabs, `scrollWidth` stays approximately equal to `clientWidth` no matter how badly the tabs overrun, `isBarOverflowing()` returns `false`, and the reducer concludes everything fits. That is exactly the observed behavior.
+
+## Fix
+
+Stop asking the browser "are you scroll-overflowing" (direction-dependent) and instead measure directly: **sum the flex children's widths + gaps and compare to the container's inner (content-box) width.** This is alignment- and scroll-direction-agnostic. `[WaaG fit]` logs are added across the pipeline to make the decision observable.
+
+---
+
+## Code changes (Client Controller)
+
+### 1. Add a debug flag
+
+Next to `OVERFLOW_TOLERANCE_PX`:
+
+```javascript
+  var OVERFLOW_TOLERANCE_PX = 2;
+  var FIT_DEBUG = true;   // set false once verified
+```
+
+### 2. Replace `isBarOverflowing` (the actual fix)
+
+```javascript
+    /**
+     * Overflow via direct measurement: sum the flex children's widths + gaps
+     * and compare to the container's inner (content-box) width. This is
+     * independent of justify-content / scroll direction — unlike scrollWidth,
+     * which does NOT report content overflowing off the LEFT edge (which is
+     * exactly what happens here because .tab-wrapper right-aligns its tabs).
+     */
+    isBarOverflowing: function() {
+      var bar = c.handlers.getBarElement();
+      if (!bar) return false;
+
+      var cs = window.getComputedStyle(bar);
+      var padL = parseFloat(cs.paddingLeft) || 0;
+      var padR = parseFloat(cs.paddingRight) || 0;
+      var gap  = parseFloat(cs.columnGap || cs.gap) || 0;
+
+      var available = bar.clientWidth - padL - padR;
+
+      var required = 0;
+      var count = 0;
+      var kids = bar.children;
+      for (var i = 0; i < kids.length; i++) {
+        if (kids[i].nodeType !== 1) continue;   // skip ng-if/ng-repeat comment nodes
+        required += kids[i].offsetWidth;
+        count++;
+      }
+      if (count > 1) required += gap * (count - 1);
+
+      var overflow = (required - available) > OVERFLOW_TOLERANCE_PX;
+
+      if (FIT_DEBUG) {
+        console.log('[WaaG fit] check', {
+          clientWidth: bar.clientWidth,
+          available: available,
+          required: required,
+          children: count,
+          primary_count: c.state.primary_count,
+          overflow: overflow
+        });
+      }
+      return overflow;
+    },
+```
+
+### 3. Replace `updateVisibleTabs` (adds one log)
+
+```javascript
+    updateVisibleTabs: function() {
+      try {
+        c.state.visible_tabs = 1;
+        c.state.primary_count = c.handlers.getCeilingCount();
+        if (FIT_DEBUG) console.log('[WaaG fit] updateVisibleTabs: ceiling =', c.state.primary_count,
+          'totalTabs =', (c.data && c.data.tabs ? c.data.tabs.length : 0));
+        c.handlers.rebuildTabSplit();
+        c.handlers.measureAndReduce();
+      } catch (e) {
+        console.error("Error updating tab split: ", e);
+      }
+    },
+```
+
+### 4. Replace `measureAndReduce` (adds decision logs)
+
+```javascript
+    measureAndReduce: function() {
+      $timeout(function step() {
+        if (destroyed || !c.data || !c.data.tabs) return;
+        if (c.data.isLoading) return;
+        if (c.state.visible_tabs === 0) return;
+
+        if (!c.handlers.isBarOverflowing()) {
+          if (FIT_DEBUG) console.log('[WaaG fit] fits at primary_count =', c.state.primary_count);
+          return;
+        }
+
+        var next = c.state.primary_count - 1;
+        var minTabs = c.handlers.getMinTabs();
+
+        if (next < minTabs) {
+          if (FIT_DEBUG) console.log('[WaaG fit] below floor (min =', minTabs, ') -> mobile <select>');
+          c.state.visible_tabs = 0;
+          c.handlers.rebuildTabSplit();
+          return;
+        }
+
+        if (FIT_DEBUG) console.log('[WaaG fit] overflow -> reduce', c.state.primary_count, '->', next);
+        c.state.primary_count = next;
+        c.handlers.rebuildTabSplit();
+        $timeout(step, 0);
+      }, 0);
+    },
+```
+
+### 5. Replace `setupBarObserver` and `handleResize` (adds observer logs)
+
+```javascript
+    setupBarObserver: function() {
+      if (barResizeObserver || destroyed) return;
+      var container = document.getElementById(c.data.instance_id);
+      if (!container) { if (FIT_DEBUG) console.warn('[WaaG fit] no container to observe'); return; }
+      if (typeof ResizeObserver === 'undefined') {
+        if (FIT_DEBUG) console.warn('[WaaG fit] no ResizeObserver; using window-resize fallback');
+        return;
+      }
+      barResizeObserver = new ResizeObserver(function(entries) {
+        if (FIT_DEBUG && entries && entries[0]) {
+          console.log('[WaaG fit] observer fired; container width =', Math.round(entries[0].contentRect.width));
+        }
+        c.handlers.handleResize();
+      });
+      barResizeObserver.observe(container);
+      if (FIT_DEBUG) console.log('[WaaG fit] observing container', c.data.instance_id);
+    },
+```
+
+```javascript
+    handleResize: function() {
+      if (resizeTimeoutPromise) $timeout.cancel(resizeTimeoutPromise);
+      resizeTimeoutPromise = $timeout(function() {
+        if (FIT_DEBUG) console.log('[WaaG fit] resize/observer -> recompute');
+        c.handlers.updateVisibleTabs();
+        resizeTimeoutPromise = null;
+      }, 150);
+    },
+```
+
+---
+
+## How to read the logs
+
+Filter the console by `[WaaG fit]` and shrink the width. Two things to watch:
+
+1. **Does `observer fired; container width = …` change as you drag?**
+   If the number never changes while the tabs overrun, the container itself isn't reflowing — the widget's parent column likely has a fixed/min width and the page is scrolling horizontally instead. That would be a layout problem (parent width constraints), not a detection one, and would need a different fix.
+
+2. **In the `check` log, compare `required` vs `available`.**
+   With the fix, once the tabs overrun you should see `required` clearly exceed `available` and a chain of `overflow -> reduce 4 -> 3 -> 2 …` until it fits or hits the floor. If `required` and `available` look right but it still doesn't reduce, capture a couple of those `check` lines for review.
+
+## Expected result
+
+The direct sum-based measurement reports overflow regardless of `justify-content`, so the width reducer now fires and the bar collapses tab-by-tab as the container narrows, down to the mobile `<select>` when it can't fit `min_tabs_visible`.
+
+## After verifying
+
+Set `FIT_DEBUG = false` to silence the logs (or remove the flag and log lines entirely). Fold this corrected `isBarOverflowing` into `solution.md` so that file remains the source of truth.
+
 - [ ] No console errors on load, resize, tab switching, or widget teardown.
 - [ ] Widget with 0 visible tabs (all empty, no always-show) stays hidden.
