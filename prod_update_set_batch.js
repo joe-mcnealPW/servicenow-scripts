@@ -195,17 +195,15 @@
         var batchDescription = 'Production Batch for ' + change.shortDescription;
         if (psrLines.length) batchDescription += '\n\n' + psrLines.join('\n');
 
-        // ---- finalize: write description + mark complete (one update) ----
+        // ---- finalize: write the PSR roll-up description (batch stays IN PROGRESS) ----
         if (DRY_RUN) {
             gs.info('[' + LOG + '] [DRY RUN] WOULD set batch "' + batchName + '" description to:\n' + batchDescription);
-            gs.info('[' + LOG + '] [DRY RUN] WOULD set batch "' + batchName + '" state -> complete');
         } else if (batchSysId) {
             var done = new GlideRecord('sys_update_set');
             if (done.get(batchSysId)) {
                 done.setValue('description', batchDescription);
-                done.setValue('state', 'complete');
                 done.update();
-                gs.info('[' + LOG + '] Batch "' + batchName + '" finalized (PSR roll-up written, marked complete).');
+                gs.info('[' + LOG + '] Batch "' + batchName + '" finalized (PSR roll-up written, left in progress).');
             }
         }
 
