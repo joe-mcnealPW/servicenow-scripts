@@ -18,7 +18,7 @@ The widget already has the pattern: approvals render as path A (card grid) while
 | Card data fields | **Via the WaaG list record** — `asset_tag`, `model`, `serial_number` arrive on the rows through the tab's configured `list_view_fields` and `getTableDetails`, exactly like every other tab. **No server-side enrichment**; the HTML binds the row fields directly. |
 | Pending vs. resolved states | `status == 'Open'` → buttons; otherwise → status pill via new `getAttestationStatusClass` (parallel to `getApprovalStateClass`). |
 
-From the reference widget's UI: card layout (image placeholder, `asset_tag` / `model` / `Serial Number:` stack), button order (Reject left, Approve right), and the "Under Review" pill styling (warning background, italic) — mapped to the `pill-warning` class.
+From the reference widget's UI: card layout (image placeholder, `asset_tag` / `model` / `Serial Number:` stack) and the "Under Review" pill styling (warning background, italic) — mapped to the `pill-warning` class. Button order deviates from the reference by request: **Approve left, Reject right** (matching the approvals card grid).
 
 ## 2. Bug fix included: attestation card drop-off
 
@@ -26,7 +26,7 @@ The current HTML passes the **row object** as `record_id` — `c.onAssetApprove(
 
 ## 3. Configuration dependency + assumptions to verify
 
-1. **WaaG list record config is the data contract.** The attestation tab's `list_view_fields` on the WaaG list record must include the asset tag, model, and serial number fields (plus `status`, which the buttons/pill key off). The HTML binds `row.asset_tag`, `row.model`, `row.serial_number` — i.e., it assumes those are the field IDs as configured. **If the configured fields are dot-walks** (e.g., `asset.asset_tag`), switch the bindings to bracket notation: `{{ row['asset.asset_tag'] }}`. One place to adjust, marked in the HTML.
+1. **WaaG list record config is the data contract — confirmed.** The attestation tab's `list_view_fields` are `asset.display_name`, `asset.asset_tag`, `asset.serial_number`, `status`. The HTML binds these via bracket notation (dot-walked field IDs are flat row keys): tag → title, display_name → model line, serial_number → serial, status → buttons/pill. ⚠️ The console output showed the field names **with spaces** (`asset.asset tag`); real field names use underscores. The bindings use underscores — if that's not a display quirk and the config literally has spaces, fix the WaaG record config (or, failing that, match the row keys exactly).
 2. **"Under Review" trigger.** The reference widget keys "Under Review" off `item.remediation_task`. Path C keys the pill off the `status` display value instead (anything matching review/remediation/pending gets the warning styling). If you want it driven by a remediation-task field, add that field to `list_view_fields` and key the pill's `ng-if`/class off it.
 3. **Cards are clickable** (`openRow`), preserving the table behavior where clicking a row opened the record; buttons `stopPropagation`. The reference widget's cards weren't clickable — flag if you'd rather match that.
 4. **Grid breakpoints standardized to 992/576** (matching the approval grid) rather than the reference's 1278/540, for in-widget consistency.
@@ -328,32 +328,34 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
 
               <div class="primary-content">
                 <img src="x_g_dla_dla_connec.asset_placeholder.png" width="87" height="71" alt=""/>
-                <!-- Field IDs come from the WaaG list record's list_view_fields.
-                     If configured as dot-walks, use bracket notation, e.g. {{ row['asset.asset_tag'] }} -->
+                <!-- Bindings match the WaaG list record's configured list_view_fields:
+                     asset.display_name, asset.asset_tag, asset.serial_number, status.
+                     Dot-walked field IDs are flat row keys, hence bracket notation.
+                     If cards render blank, inspect a row object and match keys exactly. -->
                 <div class="asset-info">
-                  <div class="title-small">{{ row.asset_tag }}</div>
-                  <div class="body-small">{{ row.model }}</div>
-                  <div class="body-extra-small" ng-if="row.serial_number">Serial Number: {{ row.serial_number }}</div>
+                  <div class="title-small">{{ row['asset.asset_tag'] }}</div>
+                  <div class="body-small">{{ row['asset.display_name'] }}</div>
+                  <div class="body-extra-small" ng-if="row['asset.serial_number']">Serial Number: {{ row['asset.serial_number'] }}</div>
                 </div>
               </div>
 
               <div class="asset-card-actions">
-                <!-- Open: Reject + Approve buttons (order mirrors the My Assets reference UI) -->
+                <!-- Open: Approve + Reject buttons -->
                 <!-- NOTE: record_id is now row.sys_id (fixes the instant drop-off bug; was passing the row object) -->
                 <div ng-if="row['status'] == 'Open'" class="asset-card-buttons">
-                  <button type="button"
-                          class="approval-action reject"
-                          ng-click="c.onAssetReject(row.sys_id, tab.id, row.sys_id); $event.stopPropagation()"
-                          uib-tooltip="Deny asset"
-                          tooltip-placement="top">
-                    <i class="fa fa-close" aria-hidden="true"></i> Reject Asset
-                  </button>
                   <button type="button"
                           class="approval-action approve"
                           ng-click="c.onAssetApprove(row.sys_id, tab.id, row.sys_id); $event.stopPropagation()"
                           uib-tooltip="Confirm asset"
                           tooltip-placement="top">
                     <i class="fa fa-check" aria-hidden="true"></i> Approve Asset
+                  </button>
+                  <button type="button"
+                          class="approval-action reject"
+                          ng-click="c.onAssetReject(row.sys_id, tab.id, row.sys_id); $event.stopPropagation()"
+                          uib-tooltip="Deny asset"
+                          tooltip-placement="top">
+                    <i class="fa fa-close" aria-hidden="true"></i> Reject Asset
                   </button>
                 </div>
 
@@ -2245,7 +2247,7 @@ api.controller = function($scope, $window, $timeout, $rootScope, spModal, spUtil
 ## 8. Verification checklist
 
 **Configuration (do first)**
-- [ ] The attestation WaaG list record's `list_view_fields` includes asset tag, model, serial number, and status — and the field IDs match the HTML bindings (`row.asset_tag`, `row.model`, `row.serial_number`, `row['status']`). Blank card fields = ID mismatch; adjust bindings (bracket notation for dot-walks).
+- [ ] WaaG list record `list_view_fields` = `asset.display_name, asset.asset_tag, asset.serial_number, status` **with underscores, not spaces**. Blank card fields = key mismatch; inspect a row object in the console and match the bindings to its keys exactly.
 
 **New attestation card view**
 - [ ] Attestation tab renders asset cards (tag, model, serial) — not the table.
