@@ -165,7 +165,7 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
                 <div class="grid gap-xs">
                   <div class='options-section-title flex flex-start align-center gap-xs'>
                     <i class="fa-solid fa-sliders text-blue" aria-hidden="true"></i>
-                    <!-- FLAGGED FIX: was <legend> in provided code; restored to <legend> -->
+                    <!-- FLAGGED FIX: was <ledlad> in provided code; restored to <legend> -->
                     <legend class='title-small ml-2'>${Filter}</legend>
                   </div>
                   <div class="option-inputs flex flex-column align-start gap-xs text-sm">
@@ -187,7 +187,7 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
                 <div class="grid gap-xs">
                   <div class='options-section-title flex flex-start align-center gap-xs'>
                     <div><svg width="24" height="23" viewBox="0 0 24 23" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6.85714 12H5.14286L5.14286 3L6.85714 3L6.85714 12Z" fill="#084476"></path><path d="M12 4.71429L10.8643 5.85L6.15 1.13571L7.28572 2.24802e-07L12 4.71429Z" fill="#084476"></path><path d="M1.13571 5.85L0 4.71428L4.71429 0L5.85 1.13571L1.13571 5.85Z" fill="#084476"></path><path d="M17.1429 11H18.8571L18.8571 20H17.1429V11Z" fill="#084476"></path><path d="M12 18.2857L13.1357 17.15L17.85 21.8643L16.7143 23L12 18.2857Z" fill="#084476"></path><path d="M22.8643 17.15L24 18.2857L19.2857 23L18.15 21.8643L22.8643 17.15Z" fill="#084476"></path></svg></div>
-                    <!-- FLAGGED FIX: was <legend> in provided code; restored to <legend> -->
+                    <!-- FLAGGED FIX: was <ledlad> in provided code; restored to <legend> -->
                     <legend class='title-small ml-2'>${Sort}</legend>
                   </div>
                   <div class="option-inputs flex flex-column align-start gap-xs">
@@ -224,7 +224,7 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
       </div>
     </div>
 
-    <div class="card-body-wrapper grid gap-md" id="gen-accordian-{{ data.instance_id }}">
+    <div class="card-body-wrapper grid gap-md" id="dla-accordian-{{ data.instance_id }}">
       <!-- Skeleton loading - Table -->
       <div ng-if="data.isLoading">
         <div class="skeleton-table-row" style="grid-template-columns: 50px 1fr 120px 120px 100px; padding: 16px; align-items: center;" ng-repeat="i in [].constructor(data.defaultRowCount) track by $index">
@@ -235,7 +235,7 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
         </div>
       </div>
 
-      <div class="card-body" id="gen-accordian-body-{{ data.instance_id }}" ng-if="!data.isLoading && data.tabs.length > 0">
+      <div class="card-body" id="dla-accordian-body-{{ data.instance_id }}" ng-if="!data.isLoading && data.tabs.length > 0">
         <div ng-repeat="tab in data.tabs track by tab.id"
              ng-if="c.state.currentTabId === tab.id"
              id="panel-{{data.instance_id}}-{{tab.id}}"
@@ -327,7 +327,7 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
                  ng-click="c.openRow(tab, row)">
 
               <div class="primary-content">
-                <img src="x_g_gen_gen_connec.asset_placeholder.png" width="87" height="71" alt=""/>
+                <img src="x_g_dla_dla_connec.asset_placeholder.png" width="87" height="71" alt=""/>
                 <!-- Field IDs come from the WaaG list record's list_view_fields.
                      If configured as dot-walks, use bracket notation, e.g. {{ row['asset.asset_tag'] }} -->
                 <div class="asset-info">
@@ -422,7 +422,7 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
               <span class='title-small'>Showing {{tab.details.rows.length}} of {{tab.details.record_count}}</span>
               <a class='title-small' ng-click="c.viewAllUrl()">View All<i class='fa fa-arrow-right'></i></a>
             </div>
-            <div ng-if="tab.details.record_count > 0 && options.include_pagination == 'true'" ng-class="{'dark': c.state.is_dark_mode }" class="flex flex-between flex-wrap align-center gap-md genc-pg">
+            <div ng-if="tab.details.record_count > 0 && options.include_pagination == 'true'" ng-class="{'dark': c.state.is_dark_mode }" class="flex flex-between flex-wrap align-center gap-md dlac-pg">
               <div class="flex flex-start align-center gap">
                 <span class='body-medium'>${Showing}</span>
                 <label class='body-medium' ng-if="tab.details.record_count <= data.rowCountOptions[0]">
@@ -449,7 +449,7 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
                   {{ 'of ' + tab.total_pages }}
                 </span>
               </div>
-              <div class="flex flex-start align-center gap genc-pg-btns">
+              <div class="flex flex-start align-center gap dlac-pg-btns">
                 <button ng-click="c.handlers.setTabPreviousPage()" class="body-medium butn butn-primary-outline butn-sm gap" ng-disabled="c.handlers.getCurrentTab().selected_page <= 1">
                   <i class="fa fa-chevron-left" aria-hidden="true"></i>
                   Previous
@@ -1087,7 +1087,7 @@ Everything else — tab fit pipeline, approvals card grid, deep-linking, search/
   padding: 2rem 0 5rem 0;
 }
 
-.genc-pg {
+.dlac-pg {
   margin-top: auto;
 	margin-bottom: 14px;
 }
@@ -1296,7 +1296,7 @@ select {
     tbody tr:nth-child(even) { background: $color-black; }
   }
 
-  .genc-pg {
+  .dlac-pg {
     container-type: inline-size;
     container-name: pagination;
     overflow: hidden;
@@ -1310,7 +1310,7 @@ select {
     }
   }
 
-  .genc-pg-btns {
+  .dlac-pg-btns {
     display: none;
     :disabled {
       border-color: $color-middle-gray !important;
@@ -1327,7 +1327,7 @@ select {
   }
 
   @container pagination (min-width: 600px) {
-    .genc-pg-btns {
+    .dlac-pg-btns {
       display: flex !important;
     }
   }
@@ -1345,7 +1345,6 @@ api.controller = function($scope, $window, $timeout, $rootScope, spModal, spUtil
 	// --- INTEGRATION: fit-pipeline constants ---
 	// Absorbs sub-pixel rounding at the fit boundary so a 1px resize can't jitter.
 	var OVERFLOW_TOLERANCE_PX = 2;
-	var FIT_DEBUG = true;   // set false once verified in the instance
 
 	c.tabSkeleton = [...new Array(3).keys()];
 
@@ -1648,16 +1647,6 @@ api.controller = function($scope, $window, $timeout, $rootScope, spModal, spUtil
 
 			var overflow = (required - available) > OVERFLOW_TOLERANCE_PX;
 
-			if (FIT_DEBUG) {
-				console.log('[WaaG fit] check', {
-					clientWidth: bar.clientWidth,
-					available: available,
-					required: required,
-					children: count,
-					primary_count: c.state.primary_count,
-					overflow: overflow
-				});
-			}
 			return overflow;
 		},
 
@@ -1691,8 +1680,6 @@ api.controller = function($scope, $window, $timeout, $rootScope, spModal, spUtil
 			try {
 				c.state.visible_tabs = 1;                        // assume desktop; loop may flip to 0
 				c.state.primary_count = c.handlers.getCeilingCount();
-				if (FIT_DEBUG) console.log('[WaaG fit] updateVisibleTabs: ceiling =', c.state.primary_count,
-					'totalTabs =', (c.data && c.data.tabs ? c.data.tabs.length : 0));
 				c.handlers.rebuildTabSplit();
 				c.handlers.measureAndReduce();
 			} catch (e) {
@@ -1712,23 +1699,18 @@ api.controller = function($scope, $window, $timeout, $rootScope, spModal, spUtil
 				if (c.data.isLoading) return;                    // bar not rendered yet
 				if (c.state.visible_tabs === 0) return;          // already mobile
 
-				if (!c.handlers.isBarOverflowing()) {
-					if (FIT_DEBUG) console.log('[WaaG fit] fits at primary_count =', c.state.primary_count);
-					return;
-				}
+				if (!c.handlers.isBarOverflowing()) return;    // fits — done
 
 				var next = c.state.primary_count - 1;
 				var minTabs = c.handlers.getMinTabs();
 
 				if (next < minTabs) {
 					// Can't fit even the minimum — collapse to the mobile <select>.
-					if (FIT_DEBUG) console.log('[WaaG fit] below floor (min =', minTabs, ') -> mobile <select>');
 					c.state.visible_tabs = 0;
 					c.handlers.rebuildTabSplit();
 					return;
 				}
 
-				if (FIT_DEBUG) console.log('[WaaG fit] overflow -> reduce', c.state.primary_count, '->', next);
 				c.state.primary_count = next;
 				c.handlers.rebuildTabSplit();
 
@@ -1745,19 +1727,12 @@ api.controller = function($scope, $window, $timeout, $rootScope, spModal, spUtil
 		setupBarObserver: function() {
 			if (barResizeObserver || destroyed) return;
 			var container = document.getElementById(c.data.instance_id);
-			if (!container) { if (FIT_DEBUG) console.warn('[WaaG fit] no container to observe'); return; }
-			if (typeof ResizeObserver === 'undefined') {
-				if (FIT_DEBUG) console.warn('[WaaG fit] no ResizeObserver; using window-resize fallback');
-				return;
-			}
-			barResizeObserver = new ResizeObserver(function(entries) {
-				if (FIT_DEBUG && entries && entries[0]) {
-					console.log('[WaaG fit] observer fired; container width =', Math.round(entries[0].contentRect.width));
-				}
+			if (!container) return;
+			if (typeof ResizeObserver === 'undefined') return;   // window-resize fallback covers this
+			barResizeObserver = new ResizeObserver(function() {
 				c.handlers.handleResize();
 			});
 			barResizeObserver.observe(container);
-			if (FIT_DEBUG) console.log('[WaaG fit] observing container', c.data.instance_id);
 		},
 
 		/**
@@ -1821,7 +1796,6 @@ api.controller = function($scope, $window, $timeout, $rootScope, spModal, spUtil
 				$timeout.cancel(resizeTimeoutPromise);
 			}
 			resizeTimeoutPromise = $timeout(function() {
-				if (FIT_DEBUG) console.log('[WaaG fit] resize/observer -> recompute');
 				c.handlers.updateVisibleTabs();
 				resizeTimeoutPromise = null;
 			}, 150);
@@ -1930,7 +1904,7 @@ api.controller = function($scope, $window, $timeout, $rootScope, spModal, spUtil
 		},
 
 		handleHeightCalculation: function() {
-			var id = 'gen-accordian-body-' + c.data.instance_id;
+			var id = 'dla-accordian-body-' + c.data.instance_id;
 			var el = document.getElementById(id);
 			if (!el) return;
 			c.state.bodyHeight = el.clientHeight;
