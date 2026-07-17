@@ -34,29 +34,24 @@ The reason we can't just reuse `spAnnouncement`: it hardcodes `'X-PORTAL-ID': $r
 
 ## 3. Pre-flight — verify before you build
 
-Four schema facts I could not confirm from ServiceNow's shipped source. All four are isolated in the `CONFIG` block at the top of the Script Include.
+Three assumptions remain in `CONFIG`. The two that used to head this list — `dismiss_options` values and the `m2m_dismissed_announcement` columns — are **resolved** (see the bottom of this section).
 
-**The one that matters.** Run in Scripts - Background:
+**Glyph value format.** The picker stores the icon name bare (`bullhorn`), and `_resolveGlyph()` assumes that by default. Confirm what your records actually hold — if they carry a prefix, the normalizer already handles it, but check that the shape is one it knows:
 
 ```javascript
-var gr = new GlideRecord('sys_choice');
-gr.addQuery('name', 'announcement');
-gr.addQuery('element', 'dismiss_options');
-gr.orderBy('sequence');
-gr.query();
-while (gr.next())
-	gs.info(gr.getValue('value') + '  =  ' + gr.getValue('label'));
+var g = new GlideRecord('announcement');
+g.addNotNullQuery('glyph');
+g.setLimit(10);
+g.query();
+while (g.next())
+	gs.info(g.getValue('title') + '  glyph = [' + g.getValue('glyph') + ']');
 ```
 
-You want the **non-dismissible** value → `CONFIG.DISMISS_NEVER`. `SESSION_DISMISSIBLE` is already confirmed (it's a hardcoded literal in ServiceNow's own `service.spAnnouncement.js`), and `_dismissMode()` mirrors OOB's "not session ⇒ server-side dismissal" logic so the *permanent* value never has to be named. **`DISMISS_NEVER` is the only value the logic depends on.** Get it wrong and an X renders on announcements that shouldn't have one.
+Anything not matching `bullhorn` / `fa-bullhorn` / `fa fa-bullhorn` / `icon-*` / `glyphicon-*` needs a branch adding to `_resolveGlyph()`.
 
-**The other three** (cosmetic, and obvious when wrong):
+**The rest** (cosmetic, and obvious when wrong):
 
 ```javascript
-var d = new GlideRecord('m2m_dismissed_announcement');
-d.initialize();
-gs.info('m2m_dismissed_announcement: ' + Object.keys(d).join(', '));
-
 var s = new GlideRecord('announcement_style');
 s.query(); s.next();
 gs.info('announcement_style: ' + Object.keys(s).join(', '));
@@ -66,7 +61,14 @@ a.initialize();
 gs.info('announcement: ' + Object.keys(a).join(', '));
 ```
 
-→ `CONFIG.DISMISSED_ANN` / `DISMISSED_USER`, `CONFIG.STYLE_*`, `CONFIG.LINK_PAGE`.
+→ `CONFIG.STYLE_*`, `CONFIG.LINK_PAGE`, `CONFIG.FIELD_GLYPH`.
+
+**Resolved 07/17:**
+
+- `announcement.dismiss_options` values are **lowercase** — `session_dismissible`, `not_dismissible`. I had these uppercase on the strength of ServiceNow's shipped `service.spAnnouncement.js`, which compares against `'SESSION_DISMISSIBLE'`. That was a bad inference: the OOB client reads the `/api/now/sp/announcement` REST layer, which transforms values on the way out — the same transform that turns `dismiss_options` into `dismissOption`. We read the table directly, so we get the raw DB value. **Anything sourced from the OOB client is evidence about the API surface, not the schema.** `_dismissMode()` now folds case on both sides so it can't bite again.
+- `m2m_dismissed_announcement` is `announcement` + **`sys_user`** (not `user`).
+
+Both are set in CONFIG.
 
 **Also read** `sys_script_client.list` → Table = `announcement` → **"Clear dismissed announcements"**. Confirm what it does to `m2m_dismissed_announcement` on update. If it wipes rows on every edit that's arguably a feature (announcement resurfaces after an edit) — but know it, don't discover it.
 
@@ -86,38 +88,47 @@ GENAnnouncementUtil.prototype = {
 	/* ══════════════════════════════════════════════
 	 * CONFIG
 	 * ══════════════════════════════════════════════
-	 * Everything in this block is schema that could NOT be confirmed from
-	 * ServiceNow's shipped source. Verify against the instance before go-live
-	 * (see §3 of solution.md). Everything outside this block is confirmed.
+	 * Schema that could not be read from ServiceNow's shipped source, isolated
+	 * here so there is one place to fix. Lines marked VERIFY are still
+	 * assumptions — check them against the instance (see §3 of solution.md).
 	 * If something breaks, look here first.
 	 */
 	CONFIG: {
 
 		/* announcement.dismiss_options choice VALUES (not labels).
 		 *
-		 * SESSION is CONFIRMED — hardcoded as a string literal inside
-		 * ServiceNow's own /scripts/app.$sp/service.spAnnouncement.js.
+		 * Both confirmed 07/17 against sys_choice. Note the case: the stored
+		 * values are LOWERCASE. ServiceNow's shipped service.spAnnouncement.js
+		 * compares against the uppercase 'SESSION_DISMISSIBLE', but that is the
+		 * /api/now/sp/announcement REST layer's transformed output, NOT the
+		 * database value — the same transform that camelCases dismiss_options
+		 * into dismissOption. Reading the table directly with GlideRecord, as
+		 * we do, gets the raw lowercase value.
 		 *
-		 * NEVER is the ONE value that must be verified. Note there is
-		 * deliberately no "PERMANENT" constant: _dismissMode() mirrors OOB's
-		 * own "anything that isn't session ⇒ server-side dismissal" logic, so
-		 * that value never gets named and can't be got wrong. */
-		DISMISS_SESSION: 'SESSION_DISMISSIBLE',   // confirmed
-		DISMISS_NEVER: 'NOT_DISMISSIBLE',         // VERIFY — see §3
+		 * There is deliberately no "PERMANENT" constant: _dismissMode() mirrors
+		 * OOB's own "anything that isn't session ⇒ server-side dismissal" logic,
+		 * so that value never gets named and can't be got wrong. */
+		DISMISS_SESSION: 'session_dismissible',   // confirmed 07/17
+		DISMISS_NEVER: 'not_dismissible',         // confirmed 07/17
 
-		/* m2m_dismissed_announcement field names */
-		DISMISSED_ANN: 'announcement',            // VERIFY
-		DISMISSED_USER: 'user',                   // VERIFY
+		/* m2m_dismissed_announcement field names.
+		 * DISMISSED_USER was 'user' and is actually 'sys_user' — this was the
+		 * cause of the silent "permanent dismiss does nothing" bug. setValue()
+		 * on a field that doesn't exist is a no-op, insert() still returns a
+		 * sys_id, so the write reported success and wrote an orphan row. */
+		DISMISSED_ANN: 'announcement',            // confirmed 07/17
+		DISMISSED_USER: 'sys_user',               // confirmed 07/17
 
 		/* announcement_style field names */
 		STYLE_BG: 'background_color',             // VERIFY
 		STYLE_FG: 'foreground_color',             // VERIFY
 		STYLE_ALIGN: 'alignment',                 // VERIFY
 
-		/* announcement link fields */
+		/* announcement link + icon fields */
 		LINK_URL: 'details_url',                  // confirmed
 		LINK_TEXT: 'details_link_text',           // confirmed
 		LINK_PAGE: 'details_page',                // VERIFY — page-type click targets only
+		FIELD_GLYPH: 'glyph',                     // VERIFY
 
 		/* OOB fallbacks, from directive.spAnnouncements.js */
 		DEFAULT_BG: '#006ed5',
@@ -291,11 +302,45 @@ GENAnnouncementUtil.prototype = {
 			/* Stripped: this is a single-line bar, and plain text sidesteps
 			 * $sce.trustAsHtml and the XSS surface it opens. */
 			summary: $sp.stripHTML(gr.getValue('summary') || ''),
+			glyph: this._resolveGlyph(gr.getValue(this.CONFIG.FIELD_GLYPH)),
 			dismissMode: mode,
 			dismissed: mode == 'permanent' && !!dismissedSet[id],
 			style: useDisplayStyle ? this._resolveStyle(gr.getValue('display_style')) : null,
 			link: this._resolveLink(gr)
 		};
+	},
+
+	/**
+	 * Normalize announcement.glyph into a ready-to-use CSS class string.
+	 *
+	 * ServiceNow's glyph picker stores the icon name WITHOUT its font prefix —
+	 * OOB's own Icon Link widget builds its markup as `fa fa-{{options.glyph}}`,
+	 * which is why binding the raw value straight into a class attribute
+	 * renders nothing. Service Portal ships Font Awesome 4.7 (~576 icons).
+	 *
+	 * The stored shape varies by instance and by how the record was created
+	 * (scripted inserts often write a prefix in), so handle all of them:
+	 *
+	 *   'bullhorn'           -> 'fa fa-bullhorn'      (what the picker stores)
+	 *   'fa-bullhorn'        -> 'fa fa-bullhorn'
+	 *   'fa fa-bullhorn'     -> 'fa fa-bullhorn'      (already complete)
+	 *   'icon-bullhorn'      -> 'icon-bullhorn'       (SN icon font, self-prefixing)
+	 *   'glyphicon-bullhorn' -> 'glyphicon glyphicon-bullhorn'
+	 *
+	 * @return {string} class string, or '' when no glyph is set
+	 */
+	_resolveGlyph: function(raw) {
+		var glyph = ((raw || '') + '').trim();
+		if (!glyph) return '';
+
+		/* Already a complete class string — trust it. */
+		if (glyph.indexOf(' ') > -1) return glyph;
+
+		if (glyph.indexOf('icon-') === 0) return glyph;
+		if (glyph.indexOf('glyphicon-') === 0) return 'glyphicon ' + glyph;
+		if (glyph.indexOf('fa-') === 0) return 'fa ' + glyph;
+
+		return 'fa fa-' + glyph;
 	},
 
 	/**
@@ -307,11 +352,18 @@ GENAnnouncementUtil.prototype = {
 	 * OOB would fall through to the permanent path. Rendering no X on a
 	 * misconfigured record is the safe failure.
 	 *
+	 * Compared lowercased on both sides: the DB stores 'session_dismissible'
+	 * but the OOB REST layer hands out 'SESSION_DISMISSIBLE', and the two get
+	 * quoted interchangeably in docs and community posts. Choice values are
+	 * unique regardless of case, so folding it costs nothing and stops a case
+	 * mismatch from silently turning every announcement permanent.
+	 *
 	 * @return {string} 'session' | 'permanent' | 'none'
 	 */
 	_dismissMode: function(raw) {
-		if (!raw || raw == this.CONFIG.DISMISS_NEVER) return 'none';
-		if (raw == this.CONFIG.DISMISS_SESSION) return 'session';
+		var value = ((raw || '') + '').trim().toLowerCase();
+		if (!value || value == this.CONFIG.DISMISS_NEVER.toLowerCase()) return 'none';
+		if (value == this.CONFIG.DISMISS_SESSION.toLowerCase()) return 'session';
 		return 'permanent';
 	},
 
@@ -436,6 +488,11 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	var SESSION_ID = ($window.NOW && $window.NOW.session_id) || '';
 	var DISMISS_EVENT = 'gen.announcement.bar.dismissed';
 
+	/* $rootScope.$broadcast reaches our own $scope.$on listener too. Without an
+	 * origin tag that listener re-hides announcements the server just told us
+	 * are visible again — which silently swallows failed writes. */
+	var INSTANCE_ID = 'ann-' + Math.random().toString(36).slice(2);
+
 	c.showAll = false;
 	c.visible = [];
 	c.shown = [];
@@ -509,7 +566,7 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 			}
 			a.dismissed = true;
 			refresh();
-			$rootScope.$broadcast(DISMISS_EVENT, { id: a.id });
+			$rootScope.$broadcast(DISMISS_EVENT, { id: a.id, from: INSTANCE_ID });
 			return;
 		}
 
@@ -527,7 +584,7 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 			c.data = response.data;
 			c.data.isLoading = false;
 			refresh();
-			$rootScope.$broadcast(DISMISS_EVENT, { id: a.id });
+			$rootScope.$broadcast(DISMISS_EVENT, { id: a.id, from: INSTANCE_ID });
 		}, function() {
 			rollback(a, null);
 		});
@@ -549,6 +606,7 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	 * server round trip.
 	 */
 	$scope.$on(DISMISS_EVENT, function(evt, args) {
+		if (args.from === INSTANCE_ID) return;   // our own echo — the server response is authoritative
 		var hit = false;
 		(c.data.announcements || []).forEach(function(a) {
 			if (a.id === args.id && !a.dismissed) {
@@ -607,6 +665,10 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 
 		<div class="ann-bar__body">
 			<span class="ann-bar__text">
+				<!-- Class string is fully resolved server-side by _resolveGlyph().
+					 Binding announcement.glyph raw here renders nothing — the
+					 stored value has no font prefix. -->
+				<i class="ann-bar__glyph {{a.glyph}}" ng-if="a.glyph" aria-hidden="true"></i>
 				<span class="ann-bar__title">{{a.title}}</span>
 				<span class="ann-bar__summary" ng-if="a.summary">{{a.summary}}</span>
 			</span>
@@ -701,6 +763,14 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 .ann-bar__item--expanded .ann-bar__text {
 	white-space: normal;
 	overflow: visible;
+}
+
+/* Inline rather than a flex sibling, so it rides with the title through
+   centering and the mobile stack without any extra ordering rules. */
+.ann-bar__glyph {
+	margin-right: 8px;
+	font-size: 16px;
+	opacity: 0.95;
 }
 
 .ann-bar__title {
@@ -930,6 +1000,9 @@ Dismissal state is invisible and sticky — get it wrong and the UI won't tell y
 **Presentation**
 - [ ] Zero announcements → **nothing renders, no layout shift**
 - [ ] Three → "1 / 3", expands, collapses
+- [ ] Glyph set → icon renders left of the title. If not, inspect the `<i>`: a class of `fa fa-bullhorn` that shows nothing means the icon name isn't in FA 4.7; a class of just `bullhorn` means `_resolveGlyph()` didn't fire
+- [ ] Glyph empty → no icon, no gap where one would be
+- [ ] Glyph + centered Display Style → icon stays with the title, both centered
 - [ ] Long title → ellipsis collapsed, wraps expanded
 - [ ] Sticky on → pins, doesn't cover modals
 - [ ] Display Style colors apply; option off → theme fallback
