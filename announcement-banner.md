@@ -13,7 +13,7 @@ A full-width horizontal bar that renders active announcements from the OOB `anno
 
 Session dismissals go to `localStorage` under the OOB key convention (`dismissed_announcement_<sys_id>` = current session ID). Permanent dismissals write a row to the OOB `m2m_dismissed_announcement` table. Both storage contracts are ServiceNow's own, so this widget is a peer of the OOB banner rather than a fork of it.
 
-Multiple announcements collapse to one line with a `1 / 3` counter that expands. Zero announcements renders **nothing** — no empty strip, no layout shift.
+Multiple announcements are paged **one at a time** with left/right chevrons flanking the content, sliding as you navigate. Zero announcements renders **nothing** — no empty strip, no layout shift. On wide screens the colored band stays full-width but the content is capped and centered to a readable measure.
 
 The reason we can't just reuse `spAnnouncement`: it hardcodes `'X-PORTAL-ID': $rootScope.portal_id` on every request. Portal targeting — the whole ask — is the one thing it can't do. And its `dismiss(id)` does `_.find(_all, {id: id})` against its own internal list, so it throws on any announcement it didn't fetch itself. Details in §11 of the companion doc.
 
@@ -28,6 +28,10 @@ The reason we can't just reuse `spAnnouncement`: it hardcodes `'X-PORTAL-ID': $r
 5. **Reuse the OOB `m2m_dismissed_announcement` table**, not a custom one. Keeps us aligned with the OOB banner and any admin tooling built over it.
 6. **Reuse the OOB localStorage key convention.** OOB's own `_cleanupStorage()` then housekeeps our keys for free, and the session-ID equality check gives us correct expiry with zero code.
 7. **Summary is stripped to plain text** server-side. It's a one-line bar, and stripping removes the `$sce.trustAsHtml` XSS surface entirely.
+8. **Multi-announcement UX is chevron paging** (one at a time, sliding), replacing the old expand-to-list `1/N` counter. Advancing slides content left, going back slides right. Left chevron inactive at the first item, right inactive at the last. Dismissing re-clamps the index to a neighbour rather than jumping to the top.
+9. **Title and summary both clamp** via `-webkit-line-clamp`, line counts driven by the `title_lines` (default 1) and `summary_lines` (default 2) options so they're tunable without touching CSS.
+10. **Link renders as an outlined button**; icons, chevrons, and button all derive color from `currentColor` (the foreground), with muted-foreground inactive chevrons — no hard-coded colors.
+11. **Content max-width is capped and centered on wide screens** (`max_width` option, default 1200px) while the colored band stays full-bleed. Mobile is chevrons-only — no swipe.
 8. **No skeleton, and no empty state** — see §10. Both are deliberate deviations from the standard for this widget specifically.
 
 ---
@@ -430,10 +434,17 @@ GENAnnouncementUtil.prototype = {
 	data.dismissResult = null;
 	data.userLoggedIn = gs.isLoggedIn();
 	data.sticky = options.sticky == 'true';
+
+	/* Presentation options passed straight to the client. Ints are floored to
+	 * sane minimums so a blank or zero option can't break the clamp/layout. */
+	data.titleLines = Math.max(1, parseInt(options.title_lines, 10) || 1);
+	data.summaryLines = Math.max(1, parseInt(options.summary_lines, 10) || 2);
+	data.maxWidth = parseInt(options.max_width, 10) || 0;   // 0 = no cap, full bleed
+
 	data.msg = {
 		dismiss: gs.getMessage('Dismiss'),
-		showAll: gs.getMessage('Show all announcements'),
-		showLess: gs.getMessage('Show fewer announcements'),
+		prev: gs.getMessage('Previous announcement'),
+		next: gs.getMessage('Next announcement'),
 		dismissFailed: gs.getMessage('We could not save your dismissal. Please try again.'),
 		loadFailed: gs.getMessage('We ran into an issue loading announcements.')
 	};
@@ -477,7 +488,7 @@ GENAnnouncementUtil.prototype = {
 ## 6. Client controller
 
 ```javascript
-api.controller = function($scope, $rootScope, $window, spUtil) {
+api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	var c = this;
 
 	/* Same key convention as OOB's service.spAnnouncement.js. Two things come
@@ -493,10 +504,13 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	 * are visible again — which silently swallows failed writes. */
 	var INSTANCE_ID = 'ann-' + Math.random().toString(36).slice(2);
 
-	c.showAll = false;
+	/* Paging state. c.visible is the filtered list; c.index is the one on
+	 * screen. c.slideDir feeds the CSS animation class ('next' | 'prev' | ''). */
 	c.visible = [];
-	c.shown = [];
+	c.index = 0;
 	c.total = 0;
+	c.slideDir = '';
+	c.animating = false;
 
 	c.server.get({ action: 'loadData' }).then(function(response) {
 		c.data = response.data;
@@ -528,6 +542,10 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 		return a.dismissMode === 'session' || !c.data.userLoggedIn;
 	}
 
+	/**
+	 * Rebuild the visible list and keep c.index in range. Called on load, on
+	 * dismiss, and after a server round trip — anything that can change the set.
+	 */
 	function refresh() {
 		c.visible = (c.data.announcements || []).filter(function(a) {
 			if (a.dismissed) return false;                                     // server: m2m row exists
@@ -535,13 +553,50 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 			return true;
 		});
 		c.total = c.visible.length;
-		c.shown = c.showAll ? c.visible : c.visible.slice(0, 1);
+		/* Clamp rather than reset: if the current item is dismissed the list
+		 * shrinks under us, and we want to land on a sane neighbour, not jump
+		 * to the top every time. Only a hard out-of-range falls back to 0. */
+		if (c.index > c.total - 1) c.index = Math.max(0, c.total - 1);
 	}
 
-	c.toggleShowAll = function() {
-		c.showAll = !c.showAll;
-		refresh();
+	c.current = function() {
+		return c.visible[c.index] || null;
 	};
+
+
+	/* ──────────────────────────────────────────────
+	 * Paging
+	 * ──────────────────────────────────────────────
+	 * A chevron is active whenever there is an announcement in that direction.
+	 * Left inactive at index 0, right inactive at the last index (Story 1).
+	 */
+
+	c.hasPrev = function() { return c.index > 0; };
+	c.hasNext = function() { return c.index < c.total - 1; };
+
+	c.prev = function() { page(-1); };
+	c.next = function() { page(1); };
+
+	function page(step) {
+		if (c.animating) return;                       // ignore clicks mid-transition
+		var target = c.index + step;
+		if (target < 0 || target > c.total - 1) return;
+
+		/* Advancing (step > 0) slides the content LEFT; going back slides it
+		 * RIGHT — the direction mapping Michelle proposed. The class drives the
+		 * CSS keyframes; see §8. */
+		c.slideDir = step > 0 ? 'next' : 'prev';
+		c.animating = true;
+		c.index = target;
+
+		/* Clear the animation flag after the transition window. Kept in sync
+		 * with the CSS duration (200ms) plus a small buffer. prefers-reduced-
+		 * motion shortcuts the CSS, but the timer is harmless either way. */
+		$timeout(function() {
+			c.animating = false;
+			c.slideDir = '';
+		}, 240);
+	}
 
 
 	/* ──────────────────────────────────────────────
@@ -553,7 +608,7 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 			$event.preventDefault();
 			$event.stopPropagation();
 		}
-		if (a.dismissMode === 'none') return;
+		if (!a || a.dismissMode === 'none') return;
 
 		if (usesSessionPath(a)) {
 			try {
@@ -623,7 +678,7 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	 * ────────────────────────────────────────────── */
 
 	c.styleFor = function(a) {
-		if (!a.style) return {};   // no display style → inherit portal theme via CSS
+		if (!a || !a.style) return {};   // no display style → inherit portal theme via CSS
 		return {
 			'background-color': a.style.background,
 			'color': a.style.foreground
@@ -631,7 +686,23 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	};
 
 	c.isCentered = function(a) {
-		return !!(a.style && a.style.alignment === 'center');
+		return !!(a && a.style && a.style.alignment === 'center');
+	};
+
+	/* Clamp line counts come from options (defaults 1 / 2) so they're tunable
+	 * without touching CSS. -webkit-line-clamp reads them as CSS custom props. */
+	c.clampStyle = function() {
+		return {
+			'--ann-title-lines': c.data.titleLines,
+			'--ann-summary-lines': c.data.summaryLines
+		};
+	};
+
+	/* Content max-width: full-bleed band, capped/centred content (per the
+	 * desktop-width requirement). 0 or empty = no cap. */
+	c.contentStyle = function() {
+		var mw = c.data.maxWidth;
+		return mw ? { 'max-width': mw + 'px' } : {};
 	};
 };
 ```
@@ -644,8 +715,10 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 <!-- Error state. Empty and loading states render nothing by design — see §10. -->
 <div class="ann-bar" ng-if="!c.data.isLoading && c.data.error">
 	<div class="ann-bar__item ann-bar__item--error">
-		<div class="ann-bar__body">
-			<span class="ann-bar__text">{{c.data.error}}</span>
+		<div class="ann-bar__content">
+			<div class="ann-bar__body">
+				<span class="ann-bar__text">{{c.data.error}}</span>
+			</div>
 		</div>
 	</div>
 </div>
@@ -654,51 +727,82 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	 ng-if="!c.data.isLoading && !c.data.error && c.total > 0"
 	 ng-class="{'ann-bar--sticky': c.data.sticky}">
 
+	<!-- One item on screen at a time. The band (.ann-bar__item) is full bleed
+		 and carries the Display Style background; .ann-bar__content is the
+		 capped, centred inner rail (desktop max-width requirement). -->
 	<div class="ann-bar__item"
-		 ng-repeat="a in c.shown track by a.id"
-		 ng-style="c.styleFor(a)"
-		 ng-class="{'ann-bar__item--centered': c.isCentered(a),
-					'ann-bar__item--expanded': c.showAll}"
+		 ng-style="c.styleFor(c.current())"
+		 ng-class="{'ann-bar__item--centered': c.isCentered(c.current())}"
 		 role="region"
+		 aria-roledescription="carousel"
 		 aria-live="polite"
-		 aria-label="{{a.title}}">
+		 aria-label="{{c.current().title}}">
 
-		<div class="ann-bar__body">
-			<span class="ann-bar__text">
-				<!-- Class string is fully resolved server-side by _resolveGlyph().
-					 Binding announcement.glyph raw here renders nothing — the
-					 stored value has no font prefix. -->
-				<i class="ann-bar__glyph {{a.glyph}}" ng-if="a.glyph" aria-hidden="true"></i>
-				<span class="ann-bar__title">{{a.title}}</span>
-				<span class="ann-bar__summary" ng-if="a.summary">{{a.summary}}</span>
-			</span>
+		<div class="ann-bar__content" ng-style="c.contentStyle()">
+
+			<!-- Left chevron. Rendered only when paging is possible (>1). Inactive
+				 (not just hidden) at the first item, per Story 1. -->
+			<button type="button"
+					class="ann-bar__nav ann-bar__nav--prev"
+					ng-if="c.total > 1"
+					ng-disabled="!c.hasPrev()"
+					ng-click="c.prev()"
+					aria-label="{{c.data.msg.prev}}">
+				<i class="fa fa-chevron-left" aria-hidden="true"></i>
+			</button>
+
+			<!-- Sliding viewport. The key on the inner div changes with the index,
+				 so Angular re-inserts it and the CSS slide-in class fires. -->
+			<div class="ann-bar__viewport">
+				<div class="ann-bar__slide"
+					 ng-class="'ann-bar__slide--' + c.slideDir"
+					 ng-style="c.clampStyle()">
+
+					<div class="ann-bar__body">
+						<!-- Class string is fully resolved server-side by _resolveGlyph().
+							 Binding announcement.glyph raw here renders nothing — the
+							 stored value has no font prefix. -->
+						<i class="ann-bar__glyph {{c.current().glyph}}"
+						   ng-if="c.current().glyph"
+						   aria-hidden="true"></i>
+
+						<span class="ann-bar__title">{{c.current().title}}</span>
+						<span class="ann-bar__summary"
+							  ng-if="c.current().summary">{{c.current().summary}}</span>
+					</div>
+
+					<a class="ann-bar__link"
+					   ng-if="c.current().link"
+					   ng-href="{{c.current().link.url}}"
+					   target="{{c.current().link.target}}"
+					   rel="noopener noreferrer">
+						{{c.current().link.text || c.current().title}}
+						<i class="fa fa-external-link"
+						   aria-hidden="true"
+						   ng-if="c.current().link.target === '_blank'"></i>
+					</a>
+				</div>
+			</div>
+
+			<!-- Right chevron. Inactive at the last item. -->
+			<button type="button"
+					class="ann-bar__nav ann-bar__nav--next"
+					ng-if="c.total > 1"
+					ng-disabled="!c.hasNext()"
+					ng-click="c.next()"
+					aria-label="{{c.data.msg.next}}">
+				<i class="fa fa-chevron-right" aria-hidden="true"></i>
+			</button>
+
 		</div>
 
-		<a class="ann-bar__link"
-		   ng-if="a.link"
-		   ng-href="{{a.link.url}}"
-		   target="{{a.link.target}}"
-		   rel="noopener noreferrer">
-			{{a.link.text || a.title}}
-			<i class="fa fa-external-link" aria-hidden="true" ng-if="a.link.target === '_blank'"></i>
-		</a>
-
-		<button type="button"
-				class="ann-bar__count"
-				ng-if="c.total > 1 && $first"
-				ng-click="c.toggleShowAll()"
-				aria-expanded="{{c.showAll}}"
-				aria-label="{{c.showAll ? c.data.msg.showLess : c.data.msg.showAll}}">
-			<span ng-if="!c.showAll">1 / {{c.total}}</span>
-			<span ng-if="c.showAll">{{c.total}}</span>
-			<i class="fa" ng-class="c.showAll ? 'fa-chevron-up' : 'fa-chevron-down'" aria-hidden="true"></i>
-		</button>
-
+		<!-- Dismiss lives OUTSIDE the capped content, pinned to the band's edge,
+			 so it doesn't shift position as you page. -->
 		<button type="button"
 				class="ann-bar__dismiss"
-				ng-if="a.dismissMode !== 'none'"
-				ng-click="c.dismiss(a, $event)"
-				aria-label="{{c.data.msg.dismiss}}: {{a.title}}">
+				ng-if="c.current().dismissMode !== 'none'"
+				ng-click="c.dismiss(c.current(), $event)"
+				aria-label="{{c.data.msg.dismiss}}: {{c.current().title}}">
 			<i class="fa fa-times" aria-hidden="true"></i>
 		</button>
 
@@ -713,7 +817,17 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 ## 8. CSS - SCSS
 
 ```scss
-/* Horizontal bar — full bleed, content-height, zero footprint when empty. */
+/* ══════════════════════════════════════════════
+ * Structure
+ * ══════════════════════════════════════════════
+ * .ann-bar         host, full width
+ * .ann-bar__item   full-bleed BAND — carries the Display Style background
+ * .ann-bar__content  capped, centred inner rail (desktop max-width)
+ * .ann-bar__nav    chevrons
+ * .ann-bar__viewport / __slide   the sliding content window
+ * All icon/chevron/link colour derives from `currentColor`, which the item's
+ * foreground colour sets — so theming flows for free (Story 4). */
+
 .ann-bar {
 	width: 100%;
 }
@@ -724,12 +838,14 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	z-index: 1030;   /* above Bootstrap 3 content, below modals (1040+) */
 }
 
+/* The BAND. Full width, holds the background; padding-right leaves room for the
+ * absolutely-positioned dismiss button so long content never slides under it. */
 .ann-bar__item {
+	position: relative;
 	display: flex;
-	align-items: center;
-	gap: 12px;
-	padding: 10px 16px;
+	justify-content: center;
 	width: 100%;
+	padding: 10px 44px 10px 16px;
 	font-size: 14px;
 	line-height: 1.4;
 	border-bottom: 1px solid rgba(0, 0, 0, 0.08);
@@ -742,69 +858,28 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	color: #444;
 }
 
-.ann-bar__body {
-	flex: 1 1 auto;
-	min-width: 0;   /* REQUIRED — without it a flex child refuses to shrink and
-					   text-overflow: ellipsis silently does nothing. */
+/* The capped inner RAIL. max-width is applied inline from the option; this is
+ * the centring + flex layout for [chevron | content | chevron]. */
+.ann-bar__content {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	/* max-width comes from c.contentStyle() so it's tunable per instance. */
 }
 
-.ann-bar__item--centered .ann-bar__body {
-	text-align: center;
-}
-
-/* Collapsed: one clean line. Expanded: let it breathe. */
-.ann-bar__text {
-	display: block;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.ann-bar__item--expanded .ann-bar__text {
-	white-space: normal;
-	overflow: visible;
-}
-
-/* Inline rather than a flex sibling, so it rides with the title through
-   centering and the mobile stack without any extra ordering rules. */
-.ann-bar__glyph {
-	margin-right: 8px;
-	font-size: 16px;
-	opacity: 0.95;
-}
-
-.ann-bar__title {
-	font-weight: 600;
-}
-
-.ann-bar__summary {
-	opacity: 0.9;
-	margin-left: 8px;
-}
-
-.ann-bar__link {
-	flex: 0 0 auto;
-	color: inherit;
-	text-decoration: underline;
-	white-space: nowrap;
-	opacity: 0.95;
-
-	&:hover,
-	&:focus {
-		color: inherit;
-		opacity: 1;
-	}
-}
-
-.ann-bar__count,
-.ann-bar__dismiss {
+/* ── Chevron nav ─────────────────────────────── */
+.ann-bar__nav {
 	flex: 0 0 auto;
 	background: transparent;
 	border: 0;
-	color: inherit;
-	opacity: 0.75;
+	color: currentColor;         /* foreground-driven */
+	opacity: 0.85;
 	padding: 4px 8px;
+	font-size: 15px;
+	line-height: 1;
 	border-radius: 3px;
+	cursor: pointer;
 	transition: opacity 0.15s ease, background-color 0.15s ease;
 
 	&:hover {
@@ -812,7 +887,146 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 		background-color: rgba(255, 255, 255, 0.15);
 	}
 
-	/* Visible keyboard focus — currentColor works against any Display Style. */
+	&:focus {
+		outline: 2px solid currentColor;
+		outline-offset: 1px;
+		opacity: 1;
+	}
+
+	/* Inactive at a boundary — muted foreground, not hidden (Story 1 + 4). */
+	&[disabled] {
+		opacity: 0.35;
+		cursor: default;
+		background-color: transparent;
+	}
+}
+
+/* ── Sliding viewport ────────────────────────── */
+.ann-bar__viewport {
+	flex: 1 1 auto;
+	min-width: 0;         /* REQUIRED for the clamp below to take effect */
+	overflow: hidden;     /* clips the slide so content enters/exits cleanly */
+}
+
+.ann-bar__slide {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-width: 0;
+}
+
+.ann-bar__item--centered .ann-bar__slide {
+	justify-content: center;
+}
+
+/* Slide-in animation. The keyed inner div is re-inserted on index change, so
+ * the entry animation fires each time. We animate a transform on the freshly
+ * inserted node rather than the clamped text, so -webkit-line-clamp (which
+ * needs the element to stay a block) and the motion don't collide. */
+.ann-bar__slide--next {
+	animation: annSlideInLeft 0.2s ease;
+}
+
+.ann-bar__slide--prev {
+	animation: annSlideInRight 0.2s ease;
+}
+
+@keyframes annSlideInLeft {
+	from { transform: translateX(24px); opacity: 0; }
+	to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes annSlideInRight {
+	from { transform: translateX(-24px); opacity: 0; }
+	to   { transform: translateX(0);     opacity: 1; }
+}
+
+/* ── Content ─────────────────────────────────── */
+.ann-bar__body {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.ann-bar__glyph {
+	color: currentColor;
+	margin-right: 8px;
+	font-size: 16px;
+	opacity: 0.95;
+	vertical-align: middle;
+}
+
+/* Title + summary both clamp. Line counts come from CSS custom properties set
+ * by c.clampStyle() (options-driven), defaulting via the fallback in var().
+ * -webkit-line-clamp is supported across all Service Portal target browsers. */
+.ann-bar__title {
+	display: -webkit-box;
+	-webkit-line-clamp: var(--ann-title-lines, 1);
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	font-weight: 600;
+}
+
+.ann-bar__summary {
+	display: -webkit-box;
+	-webkit-line-clamp: var(--ann-summary-lines, 2);
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	opacity: 0.9;
+	margin-left: 8px;
+}
+
+/* ── Link as outlined button (Story 3) ───────── */
+.ann-bar__link {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: currentColor;              /* foreground-driven, no underline */
+	text-decoration: none;
+	white-space: nowrap;
+	padding: 4px 12px;
+	border: 1px solid currentColor;
+	border-radius: 4px;
+	opacity: 0.95;
+	transition: opacity 0.15s ease, background-color 0.15s ease;
+
+	&:hover,
+	&:focus {
+		color: currentColor;
+		text-decoration: none;
+		opacity: 1;
+		background-color: rgba(255, 255, 255, 0.15);
+	}
+
+	&:focus {
+		outline: 2px solid currentColor;
+		outline-offset: 1px;
+	}
+}
+
+/* ── Dismiss — pinned to the band edge, not the rail ── */
+.ann-bar__dismiss {
+	position: absolute;
+	top: 50%;
+	right: 12px;
+	transform: translateY(-50%);
+	flex: 0 0 auto;
+	background: transparent;
+	border: 0;
+	color: currentColor;
+	opacity: 0.75;
+	padding: 4px 8px;
+	font-size: 16px;
+	line-height: 1;
+	border-radius: 3px;
+	cursor: pointer;
+	transition: opacity 0.15s ease, background-color 0.15s ease;
+
+	&:hover {
+		opacity: 1;
+		background-color: rgba(255, 255, 255, 0.15);
+	}
+
 	&:focus {
 		outline: 2px solid currentColor;
 		outline-offset: 1px;
@@ -820,55 +1034,42 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 	}
 }
 
-.ann-bar__count {
-	font-size: 12px;
-	font-weight: 600;
-	white-space: nowrap;
-
-	i {
-		margin-left: 4px;
-	}
-}
-
-.ann-bar__dismiss {
-	font-size: 16px;
-	line-height: 1;
-}
-
-/* Below tablet: stack, and let the text wrap rather than truncate to nothing. */
+/* ══════════════════════════════════════════════
+ * Mobile — chevrons only (no swipe), tap targets preserved
+ * ══════════════════════════════════════════════ */
 @media (max-width: 767px) {
 	.ann-bar__item {
-		flex-wrap: wrap;
+		padding: 10px 40px 10px 12px;
+	}
+
+	.ann-bar__content {
 		gap: 8px;
-		padding: 10px 12px;
+	}
+
+	/* Link drops below the text rather than competing for the row. */
+	.ann-bar__slide {
+		flex-wrap: wrap;
+		row-gap: 6px;
 	}
 
 	.ann-bar__body {
 		flex: 1 1 100%;
-		order: 1;
 	}
 
-	.ann-bar__text {
-		white-space: normal;
-	}
-
-	.ann-bar__link {
-		order: 2;
-	}
-
-	.ann-bar__count {
-		order: 3;
-		margin-left: auto;
-	}
-
-	.ann-bar__dismiss {
-		order: 0;
-		margin-left: auto;
+	/* Larger hit area for chevrons on touch. */
+	.ann-bar__nav {
+		padding: 8px 10px;
 	}
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.ann-bar__count,
+	.ann-bar__slide--next,
+	.ann-bar__slide--prev {
+		animation: none;
+	}
+
+	.ann-bar__nav,
+	.ann-bar__link,
 	.ann-bar__dismiss {
 		transition: none;
 	}
@@ -924,6 +1125,27 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 		"label": "Sticky",
 		"type": "boolean",
 		"default_value": "false"
+	},
+	{
+		"hint": "Cap the width of the announcement content on wide screens (px). The colored band still spans full width; only the text/controls are constrained and centered. 0 or empty = no cap.",
+		"name": "max_width",
+		"label": "Content Max Width (px)",
+		"type": "integer",
+		"default_value": "1200"
+	},
+	{
+		"hint": "Number of lines the title may occupy before truncating with an ellipsis.",
+		"name": "title_lines",
+		"label": "Title Lines (clamp)",
+		"type": "integer",
+		"default_value": "1"
+	},
+	{
+		"hint": "Number of lines the summary may occupy before truncating with an ellipsis.",
+		"name": "summary_lines",
+		"label": "Summary Lines (clamp)",
+		"type": "integer",
+		"default_value": "2"
 	}
 ]
 ```
@@ -938,6 +1160,13 @@ api.controller = function($scope, $rootScope, $window, spUtil) {
 
 - **No skeleton on load.** The standard says skeleton while `isLoading`. But this bar is empty most of the time — a skeleton would flash a fake bar on every page load and then vanish, which is worse than nothing and causes layout shift on every page in the portal. It renders nothing until it has content. One `ng-if` to add back if you disagree.
 - **No empty state.** Zero announcements renders nothing. An "no announcements to show" strip across the top of the portal would be absurd. The error state is present per the standard, though it's arguably too loud for a non-critical decoration — remove the first `ng-if` block in the template if you'd rather it fail silently.
+
+**Design calls made this pass** (from the 07/20 requirements; flag any to revisit):
+
+- **Dismiss X is pinned to the band edge, outside the capped content rail.** So it doesn't shift as you page or as content width changes. Chevrons are inner (flanking content); X is outermost.
+- **Dismissing re-clamps the index to a neighbour**, not a hard reset to the first item — less jarring when you dismiss item 3 of 5.
+- **Slide is animated on a keyed wrapper, not the clamped text.** `-webkit-line-clamp` needs the element to remain a block box, which fights a transform on the same node. Animating the entering wrapper keeps the clamp and the motion from colliding. **This is the one piece with real implementation risk** — if the slide reads as janky against the clamp in your instance, the fallback is a cross-fade (drop the `translateX` from the keyframes, keep the opacity). Noted here so it's a known dial, not a surprise.
+- **Chevron paging replaces the `1/N` expand model entirely** (confirmed). There is no longer any way to see all announcements at once — one at a time only.
 
 **Behavior changes from OOB**, all intentional:
 
@@ -999,15 +1228,48 @@ Dismissal state is invisible and sticky — get it wrong and the UI won't tell y
 
 **Presentation**
 - [ ] Zero announcements → **nothing renders, no layout shift**
-- [ ] Three → "1 / 3", expands, collapses
 - [ ] Glyph set → icon renders left of the title. If not, inspect the `<i>`: a class of `fa fa-bullhorn` that shows nothing means the icon name isn't in FA 4.7; a class of just `bullhorn` means `_resolveGlyph()` didn't fire
 - [ ] Glyph empty → no icon, no gap where one would be
 - [ ] Glyph + centered Display Style → icon stays with the title, both centered
-- [ ] Long title → ellipsis collapsed, wraps expanded
+- [ ] Long title → clamps to `title_lines` (default 1) with ellipsis
+- [ ] Long summary → clamps to `summary_lines` (default 2) with ellipsis; short summary shows in full, no ellipsis
+- [ ] Change `title_lines` / `summary_lines` options → clamp counts follow
 - [ ] Sticky on → pins, doesn't cover modals
 - [ ] Display Style colors apply; option off → theme fallback
 - [ ] Tab to the X, press Enter → dismisses, focus ring visible against the Display Style background
-- [ ] < 768px → stacks, wraps
+
+**Paging (Story 1)**
+- [ ] One announcement → **no chevrons rendered**
+- [ ] Two+ → both chevrons render
+- [ ] First item → left chevron inactive (muted, non-clickable), right active
+- [ ] Last item → right chevron inactive, left active
+- [ ] Middle item → both active
+- [ ] Right advances, left goes back; index never runs off either end
+- [ ] Dismiss the middle item of several → lands on a neighbour, not back at item 1
+- [ ] Dismiss the last remaining item → bar disappears cleanly (no empty band)
+
+**Slide (Story 2)**
+- [ ] Advancing slides content in from the right; going back from the left (or your confirmed mapping)
+- [ ] No layout jump or flicker at the swap
+- [ ] Rapid chevron clicks don't stack/tear (guarded by `c.animating`)
+- [ ] `prefers-reduced-motion` on → no slide, instant swap, still fully usable
+- [ ] Slide doesn't fight the clamp — text stays clamped mid-animation (if janky, see the cross-fade fallback in §10)
+
+**Link button (Story 3) + theming (Story 4)**
+- [ ] Announcement with a link → renders as an outlined button (border + padding), not a text link
+- [ ] Announcement without a link → no button
+- [ ] Icons, chevrons, button all take the foreground color; change the Display Style foreground → all follow
+- [ ] Inactive chevron is a muted foreground, not a different hard-coded color
+
+**Desktop width**
+- [ ] Wide monitor → colored band spans full width; content capped at `max_width` and centered
+- [ ] `max_width` = 0 / empty → content runs full width (no cap)
+- [ ] Change `max_width` → content rail resizes accordingly
+
+**Mobile (Story 7)**
+- [ ] < 768px → content and link reflow without overflow; band still full width
+- [ ] Chevrons remain tappable (larger hit area); no swipe expected
+- [ ] Dismiss X still reachable at the band edge
 
 ---
 
