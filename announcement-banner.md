@@ -847,15 +847,15 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	z-index: 1030;   /* above Bootstrap 3 content, below modals (1040+) */
 }
 
-/* The BAND. Full width, holds the background. Vertical padding 56px, horizontal
- * 10px per design; the right side keeps extra room for the absolutely-positioned
- * dismiss button so long content never slides under it. */
+/* The BAND. Full width, holds the background. Padding 10px top/bottom, 56px
+ * left/right (strict). The dismiss button is absolutely positioned at the right
+ * edge; the 56px right padding is its clearance, so content never slides under it. */
 .ann-bar__item {
 	position: relative;
 	display: flex;
 	justify-content: center;
 	width: 100%;
-	padding: 56px 44px 56px 10px;
+	padding: 10px 56px;
 	font-size: 14px;
 	line-height: 1.4;
 	border-bottom: 1px solid rgba(0, 0, 0, 0.08);
@@ -957,16 +957,24 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	min-width: 0;
 }
 
-.ann-bar__item--centered .ann-bar__heading {
-	justify-content: center;
-}
-
-/* Glyph and title share one flex row, glyph to the left of the title. */
+/* Alignment follows the announcement's Display Style. When centered, both the
+ * title row and the summary center; otherwise both sit left. The heading is a
+ * flex row (justify-content moves the glyph+title), the summary is a full-width
+ * -webkit-box block (text-align moves the text inside it) — so each needs its
+ * own centering property. */
 .ann-bar__heading {
 	display: flex;
 	align-items: baseline;
 	gap: 8px;
 	min-width: 0;
+}
+
+.ann-bar__item--centered .ann-bar__heading {
+	justify-content: center;
+}
+
+.ann-bar__item--centered .ann-bar__summary {
+	text-align: center;
 }
 
 .ann-bar__glyph {
