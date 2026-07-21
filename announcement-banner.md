@@ -505,12 +505,11 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	var INSTANCE_ID = 'ann-' + Math.random().toString(36).slice(2);
 
 	/* Paging state. c.visible is the filtered list; c.index is the one on
-	 * screen. c.slideDir feeds the CSS animation class ('next' | 'prev' | ''). */
+	 * screen. Track-slide state (c.slots / c.trackShift / c.sliding) is declared
+	 * with the paging block below. */
 	c.visible = [];
 	c.index = 0;
 	c.total = 0;
-	c.slideDir = '';
-	c.animating = false;
 
 	c.server.get({ action: 'loadData' }).then(function(response) {
 		c.data = response.data;
@@ -557,6 +556,7 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 		 * shrinks under us, and we want to land on a sane neighbour, not jump
 		 * to the top every time. Only a hard out-of-range falls back to 0. */
 		if (c.index > c.total - 1) c.index = Math.max(0, c.total - 1);
+		rebuildSlots();   // keep the [prev|current|next] track in step with the list
 	}
 
 	c.current = function() {
@@ -565,11 +565,22 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 
 
 	/* ──────────────────────────────────────────────
-	 * Paging
+	 * Paging — full track slide
 	 * ──────────────────────────────────────────────
+	 * The viewport shows one slot; the track holds [prev | current | next] side
+	 * by side, each viewport-wide, offset so `current` is centered. On a click
+	 * we translate the track one slot in the travel direction (animated), then
+	 * on transition-end update c.index and snap the offset back to center with
+	 * NO animation — so the newly-current slot is already in place and there is
+	 * no rebound. c.slots + c.trackShift drive the template; see §7/§8.
+	 *
 	 * A chevron is active whenever there is an announcement in that direction.
 	 * Left inactive at index 0, right inactive at the last index (Story 1).
 	 */
+
+	c.slots = [];        // [prevOrNull, current, nextOrNull] for the track
+	c.trackShift = 0;    // -1 = show next, +1 = show prev, 0 = centered
+	c.sliding = false;   // true only during the animated leg
 
 	c.hasPrev = function() { return c.index > 0; };
 	c.hasNext = function() { return c.index < c.total - 1; };
@@ -577,24 +588,38 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	c.prev = function() { page(-1); };
 	c.next = function() { page(1); };
 
+	/**
+	 * Rebuild the three track slots around the current index. Called after any
+	 * index or list change so the neighbours a slide would reveal are present.
+	 */
+	function rebuildSlots() {
+		c.slots = [
+			c.visible[c.index - 1] || null,
+			c.visible[c.index] || null,
+			c.visible[c.index + 1] || null
+		];
+		c.trackShift = 0;
+	}
+
 	function page(step) {
-		if (c.animating) return;                       // ignore clicks mid-transition
+		if (c.sliding) return;                         // ignore clicks mid-transition
 		var target = c.index + step;
 		if (target < 0 || target > c.total - 1) return;
 
-		/* Advancing (step > 0) slides the content LEFT; going back slides it
-		 * RIGHT — the direction mapping Michelle proposed. The class drives the
-		 * CSS keyframes; see §8. */
-		c.slideDir = step > 0 ? 'next' : 'prev';
-		c.animating = true;
-		c.index = target;
+		/* Advancing (step > 0) moves the track LEFT to reveal the `next` slot;
+		 * going back moves it RIGHT to reveal `prev`. The neighbour is already
+		 * rendered (rebuildSlots), so this leg is a pure CSS transform. */
+		c.sliding = true;
+		c.trackShift = step > 0 ? -1 : 1;
 
-		/* Clear the animation flag after the transition window. Kept in sync
-		 * with the CSS duration (200ms) plus a small buffer. prefers-reduced-
-		 * motion shortcuts the CSS, but the timer is harmless either way. */
+		/* After the animated leg: commit the new index, rebuild slots around it,
+		 * and recenter with no animation. The un-animated recenter is what kills
+		 * the rebound — by the time the browser paints, the new current slot is
+		 * already at center. Kept in sync with the CSS duration (240ms). */
 		$timeout(function() {
-			c.animating = false;
-			c.slideDir = '';
+			c.index = target;
+			rebuildSlots();          // resets trackShift to 0
+			c.sliding = false;
 		}, 240);
 	}
 
@@ -751,36 +776,49 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 				<i class="fa fa-chevron-left" aria-hidden="true"></i>
 			</button>
 
-			<!-- Sliding viewport. The key on the inner div changes with the index,
-				 so Angular re-inserts it and the CSS slide-in class fires. -->
+			<!-- Viewport window: shows exactly one slot. The track inside holds
+				 [prev | current | next] side by side, each viewport-wide, and is
+				 translated by c.trackShift (0 centered, -1 reveals next, +1 reveals
+				 prev). The animated leg transitions the transform; the recenter is
+				 un-animated (ann-bar__track--sliding gates the transition). -->
 			<div class="ann-bar__viewport">
-				<div class="ann-bar__slide"
-					 ng-class="'ann-bar__slide--' + c.slideDir"
-					 ng-style="c.clampStyle()">
+				<div class="ann-bar__track"
+					 ng-class="{'ann-bar__track--sliding': c.sliding}"
+					 ng-style="{transform: 'translateX(calc(' + c.trackShift + ' * 100%))'}">
 
-					<div class="ann-bar__body">
-						<!-- Class string is fully resolved server-side by _resolveGlyph().
-							 Binding announcement.glyph raw here renders nothing — the
-							 stored value has no font prefix. -->
-						<i class="ann-bar__glyph {{c.current().glyph}}"
-						   ng-if="c.current().glyph"
-						   aria-hidden="true"></i>
+					<!-- Three fixed slots. track by $index (not the announcement id)
+						 so Angular reuses the slot nodes as content shifts, keeping
+						 the transform continuous. Empty neighbours render a blank
+						 slot so the geometry never collapses. -->
+					<div class="ann-bar__slot"
+						 ng-repeat="slot in c.slots track by $index"
+						 ng-style="c.clampStyle()">
 
-						<span class="ann-bar__title">{{c.current().title}}</span>
-						<span class="ann-bar__summary"
-							  ng-if="c.current().summary">{{c.current().summary}}</span>
+						<div class="ann-bar__body" ng-if="slot">
+							<div class="ann-bar__heading">
+								<!-- Glyph shares a flex row with the title, to its left.
+									 Class resolved server-side by _resolveGlyph(); binding
+									 slot.glyph raw renders nothing (no prefix). -->
+								<i class="ann-bar__glyph {{slot.glyph}}"
+								   ng-if="slot.glyph"
+								   aria-hidden="true"></i>
+								<span class="ann-bar__title">{{slot.title}}</span>
+							</div>
+							<span class="ann-bar__summary"
+								  ng-if="slot.summary">{{slot.summary}}</span>
+						</div>
+
+						<a class="ann-bar__link"
+						   ng-if="slot && slot.link"
+						   ng-href="{{slot.link.url}}"
+						   target="{{slot.link.target}}"
+						   rel="noopener noreferrer">
+							{{slot.link.text || slot.title}}
+							<i class="fa fa-external-link"
+							   aria-hidden="true"
+							   ng-if="slot.link.target === '_blank'"></i>
+						</a>
 					</div>
-
-					<a class="ann-bar__link"
-					   ng-if="c.current().link"
-					   ng-href="{{c.current().link.url}}"
-					   target="{{c.current().link.target}}"
-					   rel="noopener noreferrer">
-						{{c.current().link.text || c.current().title}}
-						<i class="fa fa-external-link"
-						   aria-hidden="true"
-						   ng-if="c.current().link.target === '_blank'"></i>
-					</a>
 				</div>
 			</div>
 
@@ -824,7 +862,7 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
  * .ann-bar__item   full-bleed BAND — carries the Display Style background
  * .ann-bar__content  capped, centred inner rail (desktop max-width)
  * .ann-bar__nav    chevrons
- * .ann-bar__viewport / __slide   the sliding content window
+ * .ann-bar__viewport / __track / __slot   the sliding content window
  * All icon/chevron/link colour derives from `currentColor`, which the item's
  * foreground colour sets — so theming flows for free (Story 4). */
 
@@ -838,14 +876,15 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	z-index: 1030;   /* above Bootstrap 3 content, below modals (1040+) */
 }
 
-/* The BAND. Full width, holds the background; padding-right leaves room for the
- * absolutely-positioned dismiss button so long content never slides under it. */
+/* The BAND. Full width, holds the background. Vertical padding 56px, horizontal
+ * 10px per design; the right side keeps extra room for the absolutely-positioned
+ * dismiss button so long content never slides under it. */
 .ann-bar__item {
 	position: relative;
 	display: flex;
 	justify-content: center;
 	width: 100%;
-	padding: 10px 44px 10px 16px;
+	padding: 56px 44px 56px 10px;
 	font-size: 14px;
 	line-height: 1.4;
 	border-bottom: 1px solid rgba(0, 0, 0, 0.08);
@@ -901,44 +940,41 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	}
 }
 
-/* ── Sliding viewport ────────────────────────── */
+/* ── Sliding viewport (full track) ───────────── */
+/* The window shows exactly one slot; the track holds three viewport-wide slots
+ * laid side by side. Translating the track by ±100% reveals a neighbour. Only
+ * the animated leg carries a transition (--sliding); the recenter runs with it
+ * off, so there's no rebound. The transform lives on the track wrapper, never on
+ * the clamped text, so -webkit-line-clamp and the motion don't collide. */
 .ann-bar__viewport {
 	flex: 1 1 auto;
-	min-width: 0;         /* REQUIRED for the clamp below to take effect */
-	overflow: hidden;     /* clips the slide so content enters/exits cleanly */
+	min-width: 0;
+	overflow: hidden;
 }
 
-.ann-bar__slide {
+.ann-bar__track {
+	display: flex;
+	/* Offset one slot to the left so the MIDDLE slot (current) is what shows
+	 * through the window; c.trackShift adjusts around this via inline transform. */
+	margin-left: -100%;
+}
+
+.ann-bar__track--sliding {
+	transition: transform 0.24s ease;
+}
+
+/* Each slot is exactly the viewport width. flex: 0 0 100% keeps three of them in
+ * a row without shrinking, so the geometry is stable whether neighbours exist. */
+.ann-bar__slot {
+	flex: 0 0 100%;
+	min-width: 0;
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	min-width: 0;
 }
 
-.ann-bar__item--centered .ann-bar__slide {
+.ann-bar__item--centered .ann-bar__slot {
 	justify-content: center;
-}
-
-/* Slide-in animation. The keyed inner div is re-inserted on index change, so
- * the entry animation fires each time. We animate a transform on the freshly
- * inserted node rather than the clamped text, so -webkit-line-clamp (which
- * needs the element to stay a block) and the motion don't collide. */
-.ann-bar__slide--next {
-	animation: annSlideInLeft 0.2s ease;
-}
-
-.ann-bar__slide--prev {
-	animation: annSlideInRight 0.2s ease;
-}
-
-@keyframes annSlideInLeft {
-	from { transform: translateX(24px); opacity: 0; }
-	to   { transform: translateX(0);    opacity: 1; }
-}
-
-@keyframes annSlideInRight {
-	from { transform: translateX(-24px); opacity: 0; }
-	to   { transform: translateX(0);     opacity: 1; }
 }
 
 /* ── Content ─────────────────────────────────── */
@@ -947,12 +983,25 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	min-width: 0;
 }
 
+.ann-bar__item--centered .ann-bar__heading {
+	justify-content: center;
+}
+
+/* Glyph and title share one flex row, glyph to the left of the title. */
+.ann-bar__heading {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
 .ann-bar__glyph {
+	flex: 0 0 auto;
 	color: currentColor;
-	margin-right: 8px;
 	font-size: 16px;
 	opacity: 0.95;
-	vertical-align: middle;
+	position: relative;
+	top: 1px;   /* optical nudge so the icon sits on the title baseline */
 }
 
 /* Title + summary both clamp. Line counts come from CSS custom properties set
@@ -963,6 +1012,7 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	-webkit-line-clamp: var(--ann-title-lines, 1);
 	-webkit-box-orient: vertical;
 	overflow: hidden;
+	min-width: 0;
 	font-weight: 600;
 }
 
@@ -972,30 +1022,35 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	-webkit-box-orient: vertical;
 	overflow: hidden;
 	opacity: 0.9;
-	margin-left: 8px;
+	margin-left: 0;   /* flush left under the title, no indent */
 }
 
 /* ── Link as outlined button (Story 3) ───────── */
-.ann-bar__link {
+/* Service Portal's base stylesheet sets an explicit `color` on `a` elements
+ * (the theme link color), which outranks a plain `.ann-bar__link { color }`
+ * rule and stops currentColor from tracking the foreground. Anchoring the
+ * selector under .ann-bar__item raises specificity enough to win, and `inherit`
+ * pulls the foreground the item sets via ng-style. */
+.ann-bar__item a.ann-bar__link {
 	flex: 0 0 auto;
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	color: currentColor;              /* foreground-driven, no underline */
+	color: inherit;                   /* foreground-driven; beats the theme link color */
 	text-decoration: none;
 	white-space: nowrap;
 	padding: 4px 12px;
-	border: 1px solid currentColor;
+	border: 1px solid currentColor;   /* currentColor now resolves to the inherited foreground */
 	border-radius: 4px;
 	opacity: 0.95;
 	transition: opacity 0.15s ease, background-color 0.15s ease;
 
 	&:hover,
 	&:focus {
-		color: currentColor;
+		color: inherit;
 		text-decoration: none;
 		opacity: 1;
-		background-color: rgba(255, 255, 255, 0.15);
+		background-color: rgba(127, 127, 127, 0.15);   /* neutral tint reads on light OR dark foreground */
 	}
 
 	&:focus {
@@ -1047,7 +1102,7 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	}
 
 	/* Link drops below the text rather than competing for the row. */
-	.ann-bar__slide {
+	.ann-bar__slot {
 		flex-wrap: wrap;
 		row-gap: 6px;
 	}
@@ -1063,9 +1118,9 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.ann-bar__slide--next,
-	.ann-bar__slide--prev {
-		animation: none;
+	/* Kill the slide transition — index still advances, just instantly. */
+	.ann-bar__track--sliding {
+		transition: none;
 	}
 
 	.ann-bar__nav,
@@ -1251,7 +1306,7 @@ Dismissal state is invisible and sticky — get it wrong and the UI won't tell y
 **Slide (Story 2)**
 - [ ] Advancing slides content in from the right; going back from the left (or your confirmed mapping)
 - [ ] No layout jump or flicker at the swap
-- [ ] Rapid chevron clicks don't stack/tear (guarded by `c.animating`)
+- [ ] Rapid chevron clicks don't stack/tear (guarded by `c.sliding`)
 - [ ] `prefers-reduced-motion` on → no slide, instant swap, still fully usable
 - [ ] Slide doesn't fight the clamp — text stays clamped mid-animation (if janky, see the cross-fade fallback in §10)
 
