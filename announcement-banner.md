@@ -760,9 +760,7 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 
 			<!-- Single-item viewport. The keyed inner div is re-inserted on index
 				 change, so the CSS slide-in class fires and the incoming item
-				 enters from the travel direction. The LINK is no longer here — it
-				 lives in a pinned right lane (below) so its variable width never
-				 shifts the centered title/summary as you page. -->
+				 enters from the travel direction. -->
 			<div class="ann-bar__viewport">
 				<div class="ann-bar__slide"
 					 ng-class="'ann-bar__slide--' + c.slideDir"
@@ -781,6 +779,17 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 						<span class="ann-bar__summary"
 							  ng-if="c.current().summary">{{c.current().summary}}</span>
 					</div>
+
+					<a class="ann-bar__link"
+					   ng-if="c.current().link"
+					   ng-href="{{c.current().link.url}}"
+					   target="{{c.current().link.target}}"
+					   rel="noopener noreferrer">
+						{{c.current().link.text || c.current().title}}
+						<i class="fa fa-external-link"
+						   aria-hidden="true"
+						   ng-if="c.current().link.target === '_blank'"></i>
+					</a>
 				</div>
 			</div>
 
@@ -795,23 +804,6 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 			</button>
 
 		</div>
-
-		<!-- Link lane. Pinned to the right of the band, left of the dismiss X, so
-			 it sits in its OWN reserved zone and its variable width never disturbs
-			 the centered content (that was the paging jump). Removed from the flow
-			 via ng-if is fine HERE — it's absolutely positioned, so its presence
-			 or absence changes nothing about the centered content's geometry. On
-			 narrow screens it drops below the text instead (see §8). -->
-		<a class="ann-bar__link"
-		   ng-if="c.current().link"
-		   ng-href="{{c.current().link.url}}"
-		   target="{{c.current().link.target}}"
-		   rel="noopener noreferrer">
-			<span class="ann-bar__link-text">{{c.current().link.text || c.current().title}}</span>
-			<i class="fa fa-external-link"
-			   aria-hidden="true"
-			   ng-if="c.current().link.target === '_blank'"></i>
-		</a>
 
 		<!-- Dismiss lives OUTSIDE the capped content, pinned to the band's edge.
 			 It's ALWAYS rendered — for non-dismissible announcements it's hidden
@@ -883,21 +875,12 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 }
 
 /* The capped inner RAIL. max-width is applied inline from the option; this is
- * the centring + flex layout for [chevron | content | chevron].
- *
- * The link lane and dismiss X are pinned in the band's right padding. To keep
- * the centred title/summary from sliding under them — AND to keep it visually
- * centred rather than shoved left — we reserve the same width on BOTH sides via
- * padding. --ann-lane is the max right-lane footprint (link cap 240 + its
- * offset). Symmetric padding means the content's centre line stays at the band
- * centre regardless of whether a link is present. */
+ * the centring + flex layout for [chevron | content | chevron]. */
 .ann-bar__content {
-	--ann-lane: 296px;   /* link max-width (240) + right offset (48) + a little air */
 	display: flex;
 	align-items: center;
 	gap: 12px;
 	width: 100%;
-	padding: 0 var(--ann-lane);
 	/* max-width comes from c.contentStyle() so it's tunable per instance. */
 }
 
@@ -1030,31 +1013,22 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 	margin-left: 0;   /* flush left under the title, no indent */
 }
 
-/* ── Link — pinned right lane (Story 3) ──────── */
-/* Positioned absolutely at the right of the band, left of the dismiss X, so its
- * variable width lives in its own zone and never shifts the centered content.
- * Capped at a max-width with its label ellipsised, so a long link text can't
- * overrun the band or collide with the centered title.
- *
- * The `.ann-bar__item a.ann-bar__link` selector also solves a theming problem:
- * Service Portal's base stylesheet sets an explicit `color` on `a` elements
- * (the theme link color) that outranks a plain `.ann-bar__link { color }`; the
- * heavier selector plus `inherit` lets currentColor track the foreground. */
+/* ── Link as outlined button (Story 3) ───────── */
+/* Service Portal's base stylesheet sets an explicit `color` on `a` elements
+ * (the theme link color), which outranks a plain `.ann-bar__link { color }`
+ * rule and stops currentColor from tracking the foreground. Anchoring the
+ * selector under .ann-bar__item raises specificity enough to win, and `inherit`
+ * pulls the foreground the item sets via ng-style. */
 .ann-bar__item a.ann-bar__link {
-	position: absolute;
-	top: 50%;
-	right: 48px;                      /* clear of the dismiss X (which sits at right:12px) */
-	transform: translateY(-50%);
-	z-index: 1;
+	flex: 0 0 auto;
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	max-width: 240px;                 /* cap so a long label can't overrun the band */
 	color: inherit;                   /* foreground-driven; beats the theme link color */
 	text-decoration: none;
 	white-space: nowrap;
 	padding: 4px 12px;
-	border: 1px solid currentColor;   /* currentColor resolves to the inherited foreground */
+	border: 1px solid currentColor;   /* currentColor now resolves to the inherited foreground */
 	border-radius: 4px;
 	opacity: 0.95;
 	transition: opacity 0.15s ease, background-color 0.15s ease;
@@ -1071,14 +1045,6 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 		outline: 2px solid currentColor;
 		outline-offset: 1px;
 	}
-}
-
-/* Label ellipsises within the capped lane; the external-link icon stays put. */
-.ann-bar__link-text {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	min-width: 0;
 }
 
 /* ── Dismiss — pinned to the band edge, not the rail ── */
@@ -1121,28 +1087,21 @@ api.controller = function($scope, $rootScope, $window, $timeout, spUtil) {
 }
 @media (max-width: 767px) {
 	.ann-bar__item {
-		padding: 10px 40px;   /* keep right room for the pinned dismiss X */
+		padding: 10px 40px 10px 12px;
 	}
 
-	/* Drop the lane reservation — on narrow screens the link goes back into the
-	 * flow BELOW the text, so the content no longer needs to dodge a side lane. */
 	.ann-bar__content {
-		--ann-lane: 0px;
 		gap: 8px;
+	}
+
+	/* Link drops below the text rather than competing for the row. */
+	.ann-bar__slide {
+		flex-wrap: wrap;
+		row-gap: 6px;
 	}
 
 	.ann-bar__body {
 		flex: 1 1 100%;
-	}
-
-	/* Link un-pins and sits below the text as a normal block. Its width no longer
-	 * matters to the (now full-width) content, so no reservation is needed. */
-	.ann-bar__item a.ann-bar__link {
-		position: static;
-		transform: none;
-		display: inline-flex;
-		margin-top: 6px;
-		max-width: 100%;
 	}
 
 	/* Larger hit area for chevrons on touch. */
